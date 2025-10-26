@@ -73,6 +73,7 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
     background: var(--gradient-bg), linear-gradient(180deg, hsl(var(--background)), hsl(222, 30%, 3%));
     min-height: 100vh;
+    font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
   }
 }
 

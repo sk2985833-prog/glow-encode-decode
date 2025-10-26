@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -6,16 +6,56 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { readBitsFromImageData, bitsToUint8Array, decryptMessage } from "@/lib/steganography";
 
-export default function DecodeTab() {
+export interface DecodeTabRef {
+  clear: () => void;
+}
+
+const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
   const [password, setPassword] = useState("");
   const [decodedMessage, setDecodedMessage] = useState("");
   const [decodedInfo, setDecodedInfo] = useState("");
+  const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleClear = useCallback(() => {
+    setPassword("");
+    setDecodedMessage("");
+    setDecodedInfo("");
+    setUploadedImage(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    clear: handleClear
+  }));
+
+  const loadImage = useCallback((file: File) => {
+    setUploadedImage(file);
+    toast.success("Image loaded for decoding");
+  }, []);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) loadImage(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith("image/")) loadImage(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
   const handleDecode = async () => {
-    const file = fileInputRef.current?.files?.[0];
+    const file = uploadedImage || fileInputRef.current?.files?.[0];
     if (!file) {
-      toast.error("Choose an image to decode");
+      toast.error("Upload an image to decode");
       return;
     }
 
@@ -86,20 +126,40 @@ export default function DecodeTab() {
     <div className="space-y-6 animate-fade-in">
       <div className="card-glass rounded-xl p-6">
         <Label className="text-sm text-muted-foreground mb-3 block">Upload Encoded Image</Label>
-        <div className="flex gap-3">
-          <Input
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={() => setDragOver(false)}
+          onClick={() => fileInputRef.current?.click()}
+          className={`min-h-[180px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 mb-4 ${
+            dragOver
+              ? "border-[hsl(var(--decode-accent))] bg-[hsl(var(--decode-accent))]/5 glow-decode"
+              : "border-border/50 hover:border-[hsl(var(--decode-accent))]/50"
+          }`}
+        >
+          <div className="text-muted-foreground">
+            {uploadedImage ? uploadedImage.name : "Drag & drop encoded image, or click to browse"}
+          </div>
+          <Button variant="outline" className="btn-decode" onClick={(e) => e.stopPropagation()}>
+            Browse Image
+          </Button>
+          <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            className="flex-1 bg-background/50"
+            onChange={handleFileSelect}
+            className="hidden"
           />
+        </div>
+
+        <div className="flex gap-3">
           <Input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password (if any)"
+            placeholder="Password (if encrypted)"
             className="flex-1 bg-background/50"
           />
-          <Button onClick={handleDecode} className="btn-decode">
+          <Button onClick={handleDecode} className="btn-decode" disabled={!uploadedImage}>
             Decode
           </Button>
         </div>
@@ -120,4 +180,8 @@ export default function DecodeTab() {
       )}
     </div>
   );
-}
+});
+
+DecodeTab.displayName = "DecodeTab";
+
+export default DecodeTab;

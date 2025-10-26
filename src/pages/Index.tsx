@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import EncodeTab from "@/components/EncodeTab";
-import DecodeTab from "@/components/DecodeTab";
+import DecodeTab, { DecodeTabRef } from "@/components/DecodeTab";
 import ImagePreview from "@/components/ImagePreview";
 import { toast } from "sonner";
 
 const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [activeTab, setActiveTab] = useState<"encode" | "decode">("encode");
+  const decodeTabRef = useRef<DecodeTabRef | null>(null);
 
   const handleSampleLoad = () => {
     const canvas = document.createElement("canvas");
@@ -37,6 +38,9 @@ const Index = () => {
 
   const handleClear = () => {
     setImage(null);
+    if (activeTab === "decode" && decodeTabRef.current) {
+      decodeTabRef.current.clear();
+    }
     toast.success("Cleared");
   };
 
@@ -77,7 +81,7 @@ const Index = () => {
               </TabsContent>
 
               <TabsContent value="decode" className="mt-0">
-                <DecodeTab />
+                <DecodeTab ref={decodeTabRef} />
               </TabsContent>
             </Tabs>
           </div>
@@ -94,7 +98,8 @@ const Index = () => {
 
         {/* Footer */}
         <footer className="mt-12 text-center text-sm text-muted-foreground">
-          © 2025 Steganography Online — Upgraded
+          <p className="mb-1">Developed by <span className="font-semibold text-foreground">Lithickkumar</span> & <span className="font-semibold text-foreground">Sanjay Kumar</span></p>
+          <p className="text-xs opacity-70">Secure steganography · All processing happens locally in your browser</p>
         </footer>
       </div>
     </div>
