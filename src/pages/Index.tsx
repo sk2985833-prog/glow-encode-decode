@@ -1,9 +1,11 @@
 import { useState, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import EncodeTab from "@/components/EncodeTab";
 import DecodeTab, { DecodeTabRef } from "@/components/DecodeTab";
 import ImagePreview from "@/components/ImagePreview";
 import { toast } from "sonner";
+import { ExternalLink } from "lucide-react";
 
 const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -48,9 +50,19 @@ const Index = () => {
     <div className="min-h-screen">
       <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Header */}
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Steganography Online</h1>
-          <p className="text-muted-foreground">Hide secrets in images with LSB encoding</p>
+        <header className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Steganography Online</h1>
+            <p className="text-muted-foreground">Hide secrets in images with LSB encoding</p>
+          </div>
+          <Button 
+            variant="outline" 
+            onClick={() => window.open("https://how-lsb-work.lovable.app/", "_blank")}
+            className="flex-shrink-0"
+          >
+            Learn How It Works
+            <ExternalLink className="ml-2 h-4 w-4" />
+          </Button>
         </header>
 
         {/* Main Content */}
