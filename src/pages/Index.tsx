@@ -98,7 +98,7 @@ const Index = () => {
 
         {/* Footer */}
         <footer className="mt-12 text-center text-sm text-muted-foreground">
-          <p className="mb-1">Developed by <span className="font-semibold text-foreground">Lithickkumar</span> & <span className="font-semibold text-foreground">Sanjay Kumar</span></p>
+          <p className="mb-1">Developed by <span className="font-semibold text-foreground">Lithickkumar</span></p>
           <p className="text-xs opacity-70">Secure steganography · All processing happens locally in your browser</p>
         </footer>
       </div>
