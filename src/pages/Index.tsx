@@ -109,9 +109,13 @@ const Index = () => {
         </div>
 
         {/* Footer */}
-        <footer className="mt-12 text-center text-sm text-muted-foreground">
+        <footer className="mt-12 text-center text-sm text-muted-foreground space-y-3">
           <p className="mb-1">Developed by <span className="font-semibold text-foreground">Lithickkumar</span></p>
           <p className="text-xs opacity-70">Secure steganography · All processing happens locally in your browser</p>
+          <div className="pt-4 border-t border-border/50 mt-4">
+            <p className="text-sm mb-2">Created for educational purposes.</p>
+            <p className="text-xs opacity-80">⚠️ Use responsibly and ethically. Respect privacy and legal regulations.</p>
+          </div>
         </footer>
       </div>
     </div>
