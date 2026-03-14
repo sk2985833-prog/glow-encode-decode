@@ -122,11 +122,13 @@ export function calculateCapacity(width: number, height: number): number {
   return Math.floor((bitCap - 32) / 8); // Reserve 32 bits for length header
 }
 
-export function generatePassword(length: number = 12): string {
+export function generatePassword(length: number = 16): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*';
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
   let result = '';
   for (let i = 0; i < length; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
+    result += chars[array[i] % chars.length];
   }
   return result;
 }
