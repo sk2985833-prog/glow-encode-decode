@@ -8,7 +8,7 @@ interface ImagePreviewProps {
   image: HTMLImageElement | null;
   onSampleLoad: () => void;
   onClear: () => void;
-  activeTab: "encode" | "decode";
+  activeTab: string;
 }
 
 export default function ImagePreview({ image, onSampleLoad, onClear, activeTab }: ImagePreviewProps) {
