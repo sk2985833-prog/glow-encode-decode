@@ -60,7 +60,7 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
 
   const handleDownloadFile = () => {
     if (!decodedFile) return;
-    const blob = new Blob([decodedFile.data], { type: decodedFile.type || "application/octet-stream" });
+    const blob = new Blob([decodedFile.data.buffer as ArrayBuffer], { type: decodedFile.type || "application/octet-stream" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = decodedFile.name;
