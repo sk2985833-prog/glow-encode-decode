@@ -22,7 +22,6 @@ export default function ImageComparison({ originalImage, encodedCanvas }: ImageC
     heatmap.height = h;
     const hCtx = heatmap.getContext("2d")!;
 
-    // Get original pixels
     const origCanvas = document.createElement("canvas");
     origCanvas.width = w;
     origCanvas.height = h;
@@ -30,11 +29,9 @@ export default function ImageComparison({ originalImage, encodedCanvas }: ImageC
     origCtx.drawImage(originalImage, 0, 0);
     const origData = origCtx.getImageData(0, 0, w, h).data;
 
-    // Get encoded pixels
     const encCtx = encodedCanvas.getContext("2d")!;
     const encData = encCtx.getImageData(0, 0, w, h).data;
 
-    // Generate heatmap
     const heatData = hCtx.createImageData(w, h);
     let diffs = 0;
 
@@ -46,16 +43,15 @@ export default function ImageComparison({ originalImage, encodedCanvas }: ImageC
 
       if (diff > 0) {
         diffs++;
-        // Cyan-to-magenta heatmap
         const intensity = Math.min(diff * 80, 255);
-        heatData.data[i] = intensity > 128 ? 255 : 0;      // R
-        heatData.data[i + 1] = intensity > 200 ? 0 : 255;   // G
-        heatData.data[i + 2] = 255;                          // B
+        heatData.data[i] = intensity > 128 ? 255 : 0;
+        heatData.data[i + 1] = intensity > 200 ? 0 : 255;
+        heatData.data[i + 2] = 255;
         heatData.data[i + 3] = Math.min(intensity + 100, 255);
       } else {
-        heatData.data[i] = 10;
-        heatData.data[i + 1] = 12;
-        heatData.data[i + 2] = 20;
+        heatData.data[i] = 5;
+        heatData.data[i + 1] = 8;
+        heatData.data[i + 2] = 15;
         heatData.data[i + 3] = 255;
       }
     }
@@ -67,22 +63,17 @@ export default function ImageComparison({ originalImage, encodedCanvas }: ImageC
   if (!originalImage || !encodedCanvas) return null;
 
   return (
-    <div className="card-glass rounded-xl p-6 space-y-4 animate-fade-in">
+    <div className="card-glass rounded-xl p-5 space-y-3 animate-fade-in">
       <div className="flex items-center justify-between">
-        <Label className="text-sm text-muted-foreground">Image Comparison</Label>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowHeatmap(!showHeatmap)}
-          className="btn-encode text-xs"
-        >
-          {showHeatmap ? "Hide Heatmap" : "Show Pixel Diff Heatmap"}
+        <Label className="text-xs text-muted-foreground font-mono uppercase tracking-wider">// Image Comparison</Label>
+        <Button variant="outline" size="sm" onClick={() => setShowHeatmap(!showHeatmap)} className="btn-encode text-xs font-mono">
+          {showHeatmap ? "Hide Heatmap" : "Show Heatmap"}
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground text-center font-mono">ORIGINAL</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground text-center font-mono">ORIGINAL</p>
           <div className="border border-border/50 rounded-lg overflow-hidden">
             <canvas
               ref={(ref) => {
@@ -97,9 +88,8 @@ export default function ImageComparison({ originalImage, encodedCanvas }: ImageC
             />
           </div>
         </div>
-
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground text-center font-mono">ENCODED</p>
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground text-center font-mono">ENCODED</p>
           <div className="border border-border/50 rounded-lg overflow-hidden">
             <canvas
               ref={(ref) => {
@@ -117,16 +107,13 @@ export default function ImageComparison({ originalImage, encodedCanvas }: ImageC
       </div>
 
       {showHeatmap && (
-        <div className="space-y-2 animate-fade-in">
-          <p className="text-xs text-muted-foreground text-center font-mono">
-            PIXEL DIFFERENCE HEATMAP — <span className="text-[hsl(var(--encode-accent))]">{diffCount.toLocaleString()}</span> pixels modified
+        <div className="space-y-1 animate-fade-in">
+          <p className="text-[10px] text-muted-foreground text-center font-mono">
+            PIXEL DIFF — <span className="text-[hsl(var(--encode-accent))]">{diffCount.toLocaleString()}</span> modified
           </p>
-          <div className="border border-[hsl(var(--encode-accent))]/30 rounded-lg overflow-hidden glow-encode">
+          <div className="border border-[hsl(var(--encode-accent))]/20 rounded-lg overflow-hidden glow-encode">
             <canvas ref={heatmapRef} className="w-full" />
           </div>
-          <p className="text-xs text-muted-foreground/60 text-center">
-            Bright pixels = modified • Dark pixels = unchanged
-          </p>
         </div>
       )}
     </div>
