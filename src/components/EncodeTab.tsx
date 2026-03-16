@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import { Eye, EyeOff, KeyRound, Shuffle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   stringToUint8Array,
   uint8ToBitArray,
@@ -12,6 +14,7 @@ import {
   encryptMessage,
   generatePassword,
   calculateCapacity,
+  EncodingMode,
 } from "@/lib/steganography";
 
 interface EncodeTabProps {
@@ -22,19 +25,29 @@ interface EncodeTabProps {
 
 type InputMode = "text" | "file";
 
+const MODE_INFO: Record<EncodingMode, { label: string; icon: string; desc: string }> = {
+  lsb: { label: "LSB (Fast)", icon: "⚡", desc: "Standard LSB — 1 bit in blue channel" },
+  'multi-bit': { label: "Multi-bit LSB", icon: "🔥", desc: "6 bits/pixel across RGB — 6× capacity" },
+  'random-pixel': { label: "Random Pixel", icon: "🎲", desc: "Key-shuffled pixel order — harder to detect" },
+  'edge-based': { label: "Edge-based", icon: "🔬", desc: "Hides in edges — resists steganalysis" },
+};
+
 export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabProps) {
   const [message, setMessage] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [progress, setProgress] = useState(0);
   const [encoding, setEncoding] = useState(false);
   const [encodedCanvas, setEncodedCanvas] = useState<HTMLCanvasElement | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>("text");
   const [secretFile, setSecretFile] = useState<File | null>(null);
+  const [encodingMode, setEncodingMode] = useState<EncodingMode>("lsb");
+  const [embedKey, setEmbedKey] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const secretFileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const capacity = image ? calculateCapacity(image.width, image.height) : 0;
+  const capacity = image ? calculateCapacity(image.width, image.height, encodingMode) : 0;
 
   const loadImage = useCallback(
     (file: File) => {
@@ -80,6 +93,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
 
   const handleGenerate = () => {
     setPassword(generatePassword());
+    setShowPassword(true);
     toast.success("Password generated");
   };
 
@@ -96,34 +110,20 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
   };
 
   const handleEncode = async () => {
-    if (!image) {
-      toast.error("Load an image first");
-      return;
-    }
-
-    if (inputMode === "text" && !message.trim()) {
-      toast.error("Type a message to embed");
-      return;
-    }
-
-    if (inputMode === "file" && !secretFile) {
-      toast.error("Select a file to hide");
-      return;
-    }
+    if (!image) { toast.error("Load an image first"); return; }
+    if (inputMode === "text" && !message.trim()) { toast.error("Type a message to embed"); return; }
+    if (inputMode === "file" && !secretFile) { toast.error("Select a file to hide"); return; }
 
     setEncoding(true);
     setProgress(0);
 
     try {
       let payloadStr: string;
-
       if (inputMode === "file" && secretFile) {
-        // Read file as base64
         const buffer = await secretFile.arrayBuffer();
         const bytes = new Uint8Array(buffer);
         const b64 = btoa(String.fromCharCode(...Array.from(bytes)));
-        const fileHeader = `FILE:${secretFile.name}:${secretFile.type}:`;
-        payloadStr = fileHeader + b64;
+        payloadStr = `FILE:${secretFile.name}:${secretFile.type}:${b64}`;
       } else {
         payloadStr = message;
       }
@@ -134,9 +134,11 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
         payloadStr = "ENC:" + payloadStr;
       } else if (inputMode === "text") {
         payloadStr = "PLAIN:" + payloadStr;
-      } else {
-        payloadStr = payloadStr; // FILE: prefix already present
       }
+
+      // Store encoding mode in payload header
+      const modeHeader = `MODE:${encodingMode}:`;
+      payloadStr = modeHeader + payloadStr;
 
       const payloadBytes = stringToUint8Array(payloadStr);
       const length = payloadBytes.length;
@@ -158,7 +160,6 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
       combined.set(payloadBytes, 4);
 
       const bits = uint8ToBitArray(combined);
-
       const canvas = document.createElement("canvas");
       canvas.width = image.width;
       canvas.height = image.height;
@@ -166,9 +167,11 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
       ctx.drawImage(image, 0, 0);
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
+      const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
+
       await new Promise<void>((resolve) => {
         setTimeout(() => {
-          writeBitsToImageData(imgData, bits, (p) => setProgress(p));
+          writeBitsToImageData(imgData, bits, (p) => setProgress(p), encodingMode, keyNum);
           ctx.putImageData(imgData, 0, 0);
           resolve();
         }, 60);
@@ -201,137 +204,170 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
       {/* Image upload */}
-      <div className="card-glass rounded-xl p-6">
-        <Label className="text-sm text-muted-foreground mb-3 block">Upload Cover Image</Label>
+      <div className="card-glass rounded-xl p-5">
+        <Label className="text-xs text-muted-foreground mb-2 block font-mono uppercase tracking-wider">// Upload Cover Image</Label>
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={() => setDragOver(false)}
           onClick={() => fileInputRef.current?.click()}
-          className={`min-h-[180px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 ${
+          className={`min-h-[140px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-300 ${
             dragOver
               ? "border-[hsl(var(--encode-accent))] bg-[hsl(var(--encode-accent))]/5 glow-encode"
               : "border-border/50 hover:border-[hsl(var(--encode-accent))]/50"
           }`}
         >
-          <div className="text-muted-foreground">Drag & drop an image, or click to browse</div>
-          <Button variant="outline" className="btn-encode" onClick={(e) => e.stopPropagation()}>
+          <div className="text-muted-foreground text-sm font-mono">{'>'} Drag & drop image or click to browse</div>
+          <Button variant="outline" className="btn-encode text-xs" onClick={(e) => e.stopPropagation()}>
             Browse Image
           </Button>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
           {image && (
-            <div className="text-sm text-muted-foreground">
-              {image.width}×{image.height} ({Math.round((image.width * image.height) / 1000)}k px)
+            <div className="text-xs text-muted-foreground font-mono">
+              {image.width}×{image.height} | {Math.round((image.width * image.height) / 1000)}k px | {capacity.toLocaleString()} byte capacity
             </div>
           )}
         </div>
       </div>
 
-      {/* Input mode toggle */}
-      <div className="card-glass rounded-xl p-6 space-y-4">
-        <div className="flex gap-2 mb-2">
+      {/* Encoding Algorithm Selection */}
+      <div className="card-glass rounded-xl p-5 space-y-3">
+        <Label className="text-xs text-muted-foreground font-mono uppercase tracking-wider">// Encoding Algorithm</Label>
+        <Select value={encodingMode} onValueChange={(v) => setEncodingMode(v as EncodingMode)}>
+          <SelectTrigger className="bg-background/50 font-mono text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(MODE_INFO).map(([key, info]) => (
+              <SelectItem key={key} value={key} className="font-mono">
+                <span className="mr-2">{info.icon}</span> {info.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground font-mono">
+          {MODE_INFO[encodingMode].icon} {MODE_INFO[encodingMode].desc}
+        </p>
+        {encodingMode === 'random-pixel' && (
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1 block font-mono">Embedding Key</Label>
+            <Input
+              value={embedKey}
+              onChange={(e) => setEmbedKey(e.target.value.replace(/\D/g, ''))}
+              placeholder="483920 (default)"
+              className="bg-background/50 font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground mt-1 font-mono">Key determines pixel order — share with recipient</p>
+          </div>
+        )}
+      </div>
+
+      {/* Input mode toggle + content */}
+      <div className="card-glass rounded-xl p-5 space-y-3">
+        <div className="flex gap-2">
           <Button
             variant={inputMode === "text" ? "default" : "outline"}
             size="sm"
             onClick={() => setInputMode("text")}
-            className={inputMode === "text" ? "btn-encode" : ""}
+            className={`font-mono text-xs ${inputMode === "text" ? "btn-encode" : ""}`}
           >
-            💬 Text Message
+            {'>'} Text Message
           </Button>
           <Button
             variant={inputMode === "file" ? "default" : "outline"}
             size="sm"
             onClick={() => setInputMode("file")}
-            className={inputMode === "file" ? "btn-encode" : ""}
+            className={`font-mono text-xs ${inputMode === "file" ? "btn-encode" : ""}`}
           >
-            📄 Hide File
+            {'>'} Hide File
           </Button>
         </div>
 
         {inputMode === "text" ? (
           <div>
-            <Label className="text-sm text-muted-foreground mb-2 block">Secret Message</Label>
+            <Label className="text-xs text-muted-foreground mb-1 block font-mono uppercase tracking-wider">// Secret Message</Label>
             <Textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Type the message to hide..."
-              className="min-h-[120px] bg-background/50"
+              placeholder="> Enter classified message..."
+              className="min-h-[100px] bg-background/50 font-mono text-sm"
               maxLength={1_000_000}
             />
-            <div className="flex justify-between items-center mt-2 text-xs text-muted-foreground">
-              <span>{message.length} / {capacity} chars</span>
-              <span>One bit per pixel (LSB blue channel)</span>
+            <div className="flex justify-between items-center mt-1 text-xs text-muted-foreground font-mono">
+              <span>{message.length.toLocaleString()} / {capacity.toLocaleString()} chars</span>
+              <span>LSB blue channel</span>
             </div>
           </div>
         ) : (
           <div>
-            <Label className="text-sm text-muted-foreground mb-2 block">Secret File</Label>
+            <Label className="text-xs text-muted-foreground mb-1 block font-mono uppercase tracking-wider">// Secret File</Label>
             <div
               onClick={() => secretFileRef.current?.click()}
-              className="min-h-[100px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-300 border-border/50 hover:border-[hsl(var(--encode-accent))]/50"
+              className="min-h-[80px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-300 border-border/50 hover:border-[hsl(var(--encode-accent))]/50"
             >
               {secretFile ? (
                 <div className="text-center">
                   <p className="text-sm font-mono text-[hsl(var(--encode-accent))]">{secretFile.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground mt-1 font-mono">
                     {(secretFile.size / 1024).toFixed(1)} KB • {secretFile.type || "unknown type"}
                   </p>
                 </div>
               ) : (
-                <div className="text-muted-foreground text-sm">
-                  Click to select file (TXT, PDF, ZIP, images — max 1MB)
+                <div className="text-muted-foreground text-xs font-mono">
+                  {'>'} Select file (TXT, PDF, ZIP, images — max 1MB)
                 </div>
               )}
             </div>
-            <input
-              ref={secretFileRef}
-              type="file"
-              accept=".txt,.pdf,.zip,.png,.jpg,.jpeg,.gif,.doc,.docx"
-              onChange={handleSecretFile}
-              className="hidden"
-            />
-            {secretFile && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Encoded size: ~{Math.ceil((secretFile.size * 4) / 3).toLocaleString()} bytes (base64) / {capacity.toLocaleString()} capacity
-              </p>
-            )}
+            <input ref={secretFileRef} type="file" accept=".txt,.pdf,.zip,.png,.jpg,.jpeg,.gif,.doc,.docx" onChange={handleSecretFile} className="hidden" />
           </div>
         )}
 
         {/* Password */}
         <div>
-          <Label className="text-sm text-muted-foreground mb-2 block">Password (optional)</Label>
+          <Label className="text-xs text-muted-foreground mb-1 block font-mono uppercase tracking-wider">// AES-256 Encryption Key</Label>
           <div className="flex gap-2">
-            <Input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password to encrypt"
-              className="flex-1 bg-background/50"
-            />
-            <Button onClick={handleGenerate} variant="outline" className="btn-encode">
-              Generate
+            <div className="relative flex-1">
+              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type={showPassword ? "text" : "password"}
+                placeholder="Enter encryption key..."
+                className="flex-1 bg-background/50 pl-10 pr-10 font-mono text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <Button onClick={handleGenerate} variant="outline" className="btn-encode text-xs font-mono" size="sm">
+              <Shuffle className="h-3 w-3 mr-1" /> Generate
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            {password ? "🔒 Password set — payload will be encrypted (AES-256-GCM)" : "⚠️ No password — data stored as plaintext"}
+          <p className="text-xs text-muted-foreground mt-1 font-mono">
+            {password ? "🔒 AES-256-GCM • PBKDF2 250k iterations" : "⚠ No key — payload stored as plaintext"}
           </p>
         </div>
 
         {progress > 0 && (
-          <div>
-            <Progress value={progress} className="h-2" />
+          <div className="space-y-1">
+            <Progress value={progress} className="h-1.5" />
+            <p className="text-xs text-muted-foreground font-mono text-center">Encoding: {progress}%</p>
           </div>
         )}
 
         <div className="flex gap-3 justify-end">
-          <Button onClick={handleEncode} disabled={encoding || !image} className="btn-encode">
-            {encoding ? "Encoding..." : "Encode"}
+          <Button onClick={handleEncode} disabled={encoding || !image} className="btn-encode font-mono text-xs">
+            {encoding ? "[ ENCODING... ]" : "[ ENCODE ]"}
           </Button>
           {encodedCanvas && (
-            <Button onClick={handleDownload} variant="outline" className="btn-encode">
-              ⬇️ Download Image
+            <Button onClick={handleDownload} variant="outline" className="btn-encode font-mono text-xs">
+              ⬇ Download
             </Button>
           )}
         </div>
@@ -339,8 +375,8 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
 
       {/* Encoded result preview */}
       {encodedCanvas && (
-        <div className="card-glass rounded-xl p-6">
-          <Label className="text-sm text-muted-foreground mb-3 block">Encoded Result</Label>
+        <div className="card-glass rounded-xl p-5">
+          <Label className="text-xs text-muted-foreground mb-2 block font-mono uppercase tracking-wider">// Encoded Output</Label>
           <canvas
             ref={(ref) => {
               if (ref && encodedCanvas) {

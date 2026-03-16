@@ -1,5 +1,7 @@
 // Steganography utilities for LSB encoding/decoding
 
+export type EncodingMode = 'lsb' | 'multi-bit' | 'random-pixel' | 'edge-based';
+
 export function stringToUint8Array(str: string): Uint8Array {
   return new TextEncoder().encode(str);
 }
@@ -28,37 +30,193 @@ export function bitsToUint8Array(bits: number[]): Uint8Array {
   return bytes;
 }
 
+// --- Standard LSB (Blue channel) ---
 export function writeBitsToImageData(
   imgData: ImageData,
   bits: number[],
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  mode: EncodingMode = 'lsb',
+  key?: number
 ): ImageData {
+  switch (mode) {
+    case 'multi-bit':
+      return writeBitsMultiBit(imgData, bits, onProgress);
+    case 'random-pixel':
+      return writeBitsRandomPixel(imgData, bits, onProgress, key);
+    case 'edge-based':
+      return writeBitsEdgeBased(imgData, bits, onProgress);
+    default:
+      return writeBitsLSB(imgData, bits, onProgress);
+  }
+}
+
+function writeBitsLSB(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void): ImageData {
   const data = imgData.data;
   const total = bits.length;
-  
   for (let i = 0; i < total; i++) {
     const idx = i * 4 + 2; // Blue channel
-    const bit = bits[i];
-    data[idx] = (data[idx] & 0xfe) | bit;
-    
-    if (onProgress && i % 1000 === 0) {
-      onProgress(Math.floor((i / total) * 100));
-    }
+    data[idx] = (data[idx] & 0xfe) | bits[i];
+    if (onProgress && i % 1000 === 0) onProgress(Math.floor((i / total) * 100));
   }
-  
   if (onProgress) onProgress(100);
   return imgData;
 }
 
-export function readBitsFromImageData(imgData: ImageData, bitCount: number): number[] {
+// --- Multi-bit LSB (2 bits in R, G, B channels) ---
+function writeBitsMultiBit(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void): ImageData {
   const data = imgData.data;
-  const bits: number[] = [];
+  const total = bits.length;
+  let bitIdx = 0;
+  for (let px = 0; px < data.length && bitIdx < total; px += 4) {
+    // 2 bits in R
+    if (bitIdx < total) { data[px] = (data[px] & 0xfc) | ((bits[bitIdx] << 1) | (bits[bitIdx + 1] || 0)); bitIdx += 2; }
+    // 2 bits in G
+    if (bitIdx < total) { data[px + 1] = (data[px + 1] & 0xfc) | ((bits[bitIdx] << 1) | (bits[bitIdx + 1] || 0)); bitIdx += 2; }
+    // 2 bits in B
+    if (bitIdx < total) { data[px + 2] = (data[px + 2] & 0xfc) | ((bits[bitIdx] << 1) | (bits[bitIdx + 1] || 0)); bitIdx += 2; }
+    if (onProgress && px % 4000 === 0) onProgress(Math.floor((bitIdx / total) * 100));
+  }
+  if (onProgress) onProgress(100);
+  return imgData;
+}
+
+// --- Random Pixel LSB (key-based pseudo-random order) ---
+function seededShuffle(length: number, seed: number): number[] {
+  const indices = Array.from({ length }, (_, i) => i);
+  let s = seed;
+  for (let i = indices.length - 1; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    const j = Math.abs(s) % (i + 1);
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return indices;
+}
+
+function writeBitsRandomPixel(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void, key?: number): ImageData {
+  const data = imgData.data;
+  const total = bits.length;
+  const pixelCount = data.length / 4;
+  const seed = key || 483920;
+  const order = seededShuffle(pixelCount, seed);
   
-  for (let i = 0; i < bitCount; i++) {
-    const idx = i * 4 + 2; // Blue channel
-    bits.push(data[idx] & 1);
+  for (let i = 0; i < total; i++) {
+    const pxIdx = order[i];
+    const idx = pxIdx * 4 + 2; // Blue channel
+    data[idx] = (data[idx] & 0xfe) | bits[i];
+    if (onProgress && i % 1000 === 0) onProgress(Math.floor((i / total) * 100));
+  }
+  if (onProgress) onProgress(100);
+  return imgData;
+}
+
+// --- Edge-based embedding (hide in high-contrast edges) ---
+function writeBitsEdgeBased(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void): ImageData {
+  const data = imgData.data;
+  const w = imgData.width;
+  const total = bits.length;
+  
+  // Find edge pixels (high gradient magnitude)
+  const edgePixels: number[] = [];
+  for (let y = 1; y < imgData.height - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (y * w + x) * 4;
+      const left = data[idx - 4] + data[idx - 3] + data[idx - 2];
+      const right = data[idx + 4] + data[idx + 5] + data[idx + 6];
+      const top = data[((y - 1) * w + x) * 4] + data[((y - 1) * w + x) * 4 + 1] + data[((y - 1) * w + x) * 4 + 2];
+      const bottom = data[((y + 1) * w + x) * 4] + data[((y + 1) * w + x) * 4 + 1] + data[((y + 1) * w + x) * 4 + 2];
+      const gradient = Math.abs(right - left) + Math.abs(bottom - top);
+      if (gradient > 30) edgePixels.push(idx);
+    }
   }
   
+  // Fallback to standard if not enough edges
+  if (edgePixels.length < total) {
+    return writeBitsLSB(imgData, bits, onProgress);
+  }
+  
+  for (let i = 0; i < total; i++) {
+    const idx = edgePixels[i] + 2; // Blue channel
+    data[idx] = (data[idx] & 0xfe) | bits[i];
+    if (onProgress && i % 1000 === 0) onProgress(Math.floor((i / total) * 100));
+  }
+  if (onProgress) onProgress(100);
+  return imgData;
+}
+
+// --- Reading ---
+export function readBitsFromImageData(
+  imgData: ImageData,
+  bitCount: number,
+  mode: EncodingMode = 'lsb',
+  key?: number
+): number[] {
+  switch (mode) {
+    case 'multi-bit':
+      return readBitsMultiBit(imgData, bitCount);
+    case 'random-pixel':
+      return readBitsRandomPixel(imgData, bitCount, key);
+    case 'edge-based':
+      return readBitsEdgeBased(imgData, bitCount);
+    default:
+      return readBitsLSB(imgData, bitCount);
+  }
+}
+
+function readBitsLSB(imgData: ImageData, bitCount: number): number[] {
+  const data = imgData.data;
+  const bits: number[] = [];
+  for (let i = 0; i < bitCount; i++) {
+    bits.push(data[i * 4 + 2] & 1);
+  }
+  return bits;
+}
+
+function readBitsMultiBit(imgData: ImageData, bitCount: number): number[] {
+  const data = imgData.data;
+  const bits: number[] = [];
+  for (let px = 0; px < data.length && bits.length < bitCount; px += 4) {
+    // R
+    if (bits.length < bitCount) { bits.push((data[px] >> 1) & 1); if (bits.length < bitCount) bits.push(data[px] & 1); }
+    // G
+    if (bits.length < bitCount) { bits.push((data[px + 1] >> 1) & 1); if (bits.length < bitCount) bits.push(data[px + 1] & 1); }
+    // B
+    if (bits.length < bitCount) { bits.push((data[px + 2] >> 1) & 1); if (bits.length < bitCount) bits.push(data[px + 2] & 1); }
+  }
+  return bits;
+}
+
+function readBitsRandomPixel(imgData: ImageData, bitCount: number, key?: number): number[] {
+  const data = imgData.data;
+  const pixelCount = data.length / 4;
+  const seed = key || 483920;
+  const order = seededShuffle(pixelCount, seed);
+  const bits: number[] = [];
+  for (let i = 0; i < bitCount; i++) {
+    bits.push(data[order[i] * 4 + 2] & 1);
+  }
+  return bits;
+}
+
+function readBitsEdgeBased(imgData: ImageData, bitCount: number): number[] {
+  const data = imgData.data;
+  const w = imgData.width;
+  const edgePixels: number[] = [];
+  for (let y = 1; y < imgData.height - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (y * w + x) * 4;
+      const left = data[idx - 4] + data[idx - 3] + data[idx - 2];
+      const right = data[idx + 4] + data[idx + 5] + data[idx + 6];
+      const top = data[((y - 1) * w + x) * 4] + data[((y - 1) * w + x) * 4 + 1] + data[((y - 1) * w + x) * 4 + 2];
+      const bottom = data[((y + 1) * w + x) * 4] + data[((y + 1) * w + x) * 4 + 1] + data[((y + 1) * w + x) * 4 + 2];
+      const gradient = Math.abs(right - left) + Math.abs(bottom - top);
+      if (gradient > 30) edgePixels.push(idx);
+    }
+  }
+  if (edgePixels.length < bitCount) return readBitsLSB(imgData, bitCount);
+  const bits: number[] = [];
+  for (let i = 0; i < bitCount; i++) {
+    bits.push(data[edgePixels[i] + 2] & 1);
+  }
   return bits;
 }
 
@@ -66,19 +224,11 @@ export function readBitsFromImageData(imgData: ImageData, bitCount: number): num
 export async function deriveKeyFromPassword(password: string, salt: BufferSource): Promise<CryptoKey> {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveKey']
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']
   );
-  
   return await crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: salt as BufferSource, iterations: 250000, hash: 'SHA-256' },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
+    keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
   );
 }
 
@@ -88,38 +238,35 @@ export async function encryptMessage(password: string, plaintext: string): Promi
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKeyFromPassword(password, salt);
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plaintext));
-  
   const payload = new Uint8Array(salt.byteLength + iv.byteLength + ct.byteLength);
   payload.set(salt, 0);
   payload.set(iv, salt.byteLength);
   payload.set(new Uint8Array(ct), salt.byteLength + iv.byteLength);
-  
   return btoa(String.fromCharCode(...Array.from(payload)));
 }
 
 export async function decryptMessage(password: string, b64payload: string): Promise<string> {
   const binary = atob(b64payload);
-  const len = binary.length;
-  const arr = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    arr[i] = binary.charCodeAt(i);
-  }
-  
-  const data = arr;
-  const salt = data.slice(0, 16);
-  const iv = data.slice(16, 28);
-  const ct = data.slice(28).buffer;
-  
+  const arr = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+  const salt = arr.slice(0, 16);
+  const iv = arr.slice(16, 28);
+  const ct = arr.slice(28).buffer;
   const key = await deriveKeyFromPassword(password, salt);
   const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
-  
   return new TextDecoder().decode(dec);
 }
 
-export function calculateCapacity(width: number, height: number): number {
+export function calculateCapacity(width: number, height: number, mode: EncodingMode = 'lsb'): number {
   const pixels = width * height;
-  const bitCap = pixels; // 1 bit per pixel
-  return Math.floor((bitCap - 32) / 8); // Reserve 32 bits for length header
+  switch (mode) {
+    case 'multi-bit':
+      return Math.floor((pixels * 6 - 32) / 8); // 6 bits per pixel (2 per channel)
+    case 'random-pixel':
+    case 'edge-based':
+    default:
+      return Math.floor((pixels - 32) / 8); // 1 bit per pixel
+  }
 }
 
 export function generatePassword(length: number = 16): string {
@@ -131,4 +278,206 @@ export function generatePassword(length: number = 16): string {
     result += chars[array[i] % chars.length];
   }
   return result;
+}
+
+// --- Steganalysis utilities ---
+export function calculateEntropy(data: Uint8ClampedArray, channel: number): number {
+  const freq = new Float64Array(256);
+  const pixelCount = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    freq[data[i + channel]]++;
+  }
+  let entropy = 0;
+  for (let i = 0; i < 256; i++) {
+    if (freq[i] > 0) {
+      const p = freq[i] / pixelCount;
+      entropy -= p * Math.log2(p);
+    }
+  }
+  return entropy;
+}
+
+export function calculateLSBRandomness(data: Uint8ClampedArray, channel: number): number {
+  let flips = 0;
+  let lastBit = data[channel] & 1;
+  const pixelCount = data.length / 4;
+  for (let i = 4; i < data.length; i += 4) {
+    const bit = data[i + channel] & 1;
+    if (bit !== lastBit) flips++;
+    lastBit = bit;
+  }
+  // Perfect random would be ~0.5 flip rate
+  return flips / (pixelCount - 1);
+}
+
+export function getHistogram(data: Uint8ClampedArray, channel: number): number[] {
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < data.length; i += 4) {
+    hist[data[i + channel]]++;
+  }
+  return hist;
+}
+
+export function detectChiSquare(data: Uint8ClampedArray, channel: number): number {
+  const hist = getHistogram(data, channel);
+  let chi = 0;
+  let pairs = 0;
+  // Compare pairs of values (2i, 2i+1) - PoV test
+  for (let i = 0; i < 256; i += 2) {
+    const expected = (hist[i] + hist[i + 1]) / 2;
+    if (expected > 0) {
+      chi += Math.pow(hist[i] - expected, 2) / expected;
+      chi += Math.pow(hist[i + 1] - expected, 2) / expected;
+      pairs++;
+    }
+  }
+  return pairs > 0 ? chi / pairs : 0;
+}
+
+// --- Metadata extraction ---
+export function extractEXIF(arrayBuffer: ArrayBuffer): Record<string, string> {
+  const view = new DataView(arrayBuffer);
+  const result: Record<string, string> = {};
+  
+  // Check JPEG SOI marker
+  if (view.getUint16(0) !== 0xFFD8) {
+    result['Format'] = 'Not JPEG (no EXIF)';
+    return result;
+  }
+  
+  let offset = 2;
+  while (offset < view.byteLength - 2) {
+    const marker = view.getUint16(offset);
+    if (marker === 0xFFE1) { // APP1 (EXIF)
+      const length = view.getUint16(offset + 2);
+      // Check for "Exif\0\0"
+      const exifHeader = String.fromCharCode(
+        view.getUint8(offset + 4), view.getUint8(offset + 5),
+        view.getUint8(offset + 6), view.getUint8(offset + 7)
+      );
+      if (exifHeader === 'Exif') {
+        result['EXIF'] = 'Present';
+        result['EXIF Data Size'] = `${length} bytes`;
+        // Parse TIFF header
+        const tiffOffset = offset + 10;
+        const bigEndian = view.getUint16(tiffOffset) === 0x4D4D;
+        result['Byte Order'] = bigEndian ? 'Big Endian (Motorola)' : 'Little Endian (Intel)';
+        
+        try {
+          const ifdOffset = bigEndian ? view.getUint32(tiffOffset + 4) : view.getUint32(tiffOffset + 4, true);
+          const tagCount = bigEndian ? view.getUint16(tiffOffset + ifdOffset) : view.getUint16(tiffOffset + ifdOffset, true);
+          result['IFD Tags'] = `${tagCount} tags found`;
+          
+          for (let i = 0; i < Math.min(tagCount, 20); i++) {
+            const entryOffset = tiffOffset + ifdOffset + 2 + i * 12;
+            if (entryOffset + 12 > view.byteLength) break;
+            const tag = bigEndian ? view.getUint16(entryOffset) : view.getUint16(entryOffset, true);
+            const tagNames: Record<number, string> = {
+              0x010F: 'Camera Make', 0x0110: 'Camera Model', 0x0112: 'Orientation',
+              0x011A: 'X Resolution', 0x011B: 'Y Resolution', 0x0128: 'Resolution Unit',
+              0x0131: 'Software', 0x0132: 'Date/Time', 0x8769: 'EXIF IFD',
+              0x8825: 'GPS IFD', 0xA001: 'Color Space', 0xA002: 'Pixel X Dimension',
+              0xA003: 'Pixel Y Dimension',
+            };
+            if (tagNames[tag]) {
+              const type = bigEndian ? view.getUint16(entryOffset + 2) : view.getUint16(entryOffset + 2, true);
+              const count = bigEndian ? view.getUint32(entryOffset + 4) : view.getUint32(entryOffset + 4, true);
+              if (type === 3 && count === 1) { // SHORT
+                const val = bigEndian ? view.getUint16(entryOffset + 8) : view.getUint16(entryOffset + 8, true);
+                result[tagNames[tag]] = String(val);
+              } else if (type === 4 && count === 1) { // LONG
+                const val = bigEndian ? view.getUint32(entryOffset + 8) : view.getUint32(entryOffset + 8, true);
+                result[tagNames[tag]] = String(val);
+              } else if (type === 2) { // ASCII
+                if (count <= 4) {
+                  let str = '';
+                  for (let c = 0; c < count - 1; c++) str += String.fromCharCode(view.getUint8(entryOffset + 8 + c));
+                  result[tagNames[tag]] = str;
+                } else {
+                  const strOffset = bigEndian ? view.getUint32(entryOffset + 8) : view.getUint32(entryOffset + 8, true);
+                  let str = '';
+                  for (let c = 0; c < Math.min(count - 1, 64); c++) {
+                    if (tiffOffset + strOffset + c < view.byteLength) {
+                      str += String.fromCharCode(view.getUint8(tiffOffset + strOffset + c));
+                    }
+                  }
+                  result[tagNames[tag]] = str;
+                }
+              } else {
+                result[tagNames[tag]] = 'Found';
+              }
+            }
+          }
+        } catch {
+          result['Parse Note'] = 'Partial EXIF data extracted';
+        }
+      }
+      break;
+    } else if ((marker & 0xFF00) === 0xFF00) {
+      const segLength = view.getUint16(offset + 2);
+      offset += 2 + segLength;
+    } else {
+      break;
+    }
+  }
+  
+  if (Object.keys(result).length === 0) {
+    result['EXIF'] = 'Not found';
+    result['Note'] = 'PNG/BMP files typically do not contain EXIF data';
+  }
+  
+  return result;
+}
+
+// --- Attack simulation ---
+export function simulateJPEGCompression(canvas: HTMLCanvasElement, quality: number): Promise<HTMLCanvasElement> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) { resolve(canvas); return; }
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = canvas.width;
+        c.height = canvas.height;
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve(c);
+      };
+      img.src = url;
+    }, 'image/jpeg', quality);
+  });
+}
+
+export function simulateResize(canvas: HTMLCanvasElement, scale: number): HTMLCanvasElement {
+  const c1 = document.createElement('canvas');
+  c1.width = Math.round(canvas.width * scale);
+  c1.height = Math.round(canvas.height * scale);
+  const ctx1 = c1.getContext('2d')!;
+  ctx1.drawImage(canvas, 0, 0, c1.width, c1.height);
+  // Scale back
+  const c2 = document.createElement('canvas');
+  c2.width = canvas.width;
+  c2.height = canvas.height;
+  const ctx2 = c2.getContext('2d')!;
+  ctx2.drawImage(c1, 0, 0, c2.width, c2.height);
+  return c2;
+}
+
+export function simulateNoise(canvas: HTMLCanvasElement, intensity: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = canvas.width;
+  c.height = canvas.height;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(canvas, 0, 0);
+  const imgData = ctx.getImageData(0, 0, c.width, c.height);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.max(0, Math.min(255, data[i] + (Math.random() - 0.5) * intensity * 2));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + (Math.random() - 0.5) * intensity * 2));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + (Math.random() - 0.5) * intensity * 2));
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return c;
 }

@@ -4,7 +4,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { readBitsFromImageData, bitsToUint8Array, decryptMessage } from "@/lib/steganography";
+import { Eye, EyeOff, KeyRound } from "lucide-react";
+import { readBitsFromImageData, bitsToUint8Array, decryptMessage, EncodingMode } from "@/lib/steganography";
 import TerminalOutput from "./TerminalOutput";
 
 export interface DecodeTabRef {
@@ -13,6 +14,7 @@ export interface DecodeTabRef {
 
 const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [decodedMessage, setDecodedMessage] = useState("");
   const [decodedInfo, setDecodedInfo] = useState("");
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
@@ -20,6 +22,7 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
   const [terminalLines, setTerminalLines] = useState<string[]>([]);
   const [isDecoding, setIsDecoding] = useState(false);
   const [decodedFile, setDecodedFile] = useState<{ name: string; type: string; data: Uint8Array } | null>(null);
+  const [embedKey, setEmbedKey] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleClear = useCallback(() => {
@@ -29,12 +32,11 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
     setUploadedImage(null);
     setTerminalLines([]);
     setDecodedFile(null);
+    setEmbedKey("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
-  useImperativeHandle(ref, () => ({
-    clear: handleClear
-  }));
+  useImperativeHandle(ref, () => ({ clear: handleClear }));
 
   const loadImage = useCallback((file: File) => {
     setUploadedImage(file);
@@ -72,18 +74,15 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
 
   const handleDecode = async () => {
     const file = uploadedImage || fileInputRef.current?.files?.[0];
-    if (!file) {
-      toast.error("Upload an image to decode");
-      return;
-    }
+    if (!file) { toast.error("Upload an image to decode"); return; }
 
     setIsDecoding(true);
     setDecodedMessage("");
     setDecodedFile(null);
     setTerminalLines([
-      "Initializing decoder...",
-      `Loading image: ${file.name}`,
-      "Scanning pixel data...",
+      "$ stego-decoder --init",
+      `Loading target: ${file.name}`,
+      "Scanning pixel matrix...",
     ]);
 
     const reader = new FileReader();
@@ -98,48 +97,74 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
 
         try {
           const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          setTerminalLines((prev) => [...prev, "Reading LSB header [32 bits]..."]);
 
-          setTerminalLines((prev) => [...prev, "Reading LSB header (32 bits)..."]);
-
-          const headerBits = readBitsFromImageData(imgData, 32);
+          // Try standard LSB first for header
+          const headerBits = readBitsFromImageData(imgData, 32, 'lsb');
           const headerBytes = bitsToUint8Array(headerBits);
-          const length =
-            (headerBytes[0] << 24) |
-            (headerBytes[1] << 16) |
-            (headerBytes[2] << 8) |
-            headerBytes[3];
+          const length = (headerBytes[0] << 24) | (headerBytes[1] << 16) | (headerBytes[2] << 8) | headerBytes[3];
 
           if (length <= 0 || length > 500_000) {
-            setTerminalLines((prev) => [...prev, `ERROR: Invalid length header (${length})`, "No hidden data detected ✖"]);
+            setTerminalLines((prev) => [...prev, `[ERR] Invalid header: length=${length}`, "Status: NO HIDDEN DATA ✖"]);
             setIsDecoding(false);
-            toast.error("No hidden data found in this image");
+            toast.error("No hidden data found");
             return;
           }
 
           setTerminalLines((prev) => [
             ...prev,
-            `Hidden data detected ✔ (${length.toLocaleString()} bytes)`,
-            "Extracting hidden bits...",
+            `[OK] Hidden payload detected: ${length.toLocaleString()} bytes`,
+            "Extracting embedded bits...",
           ]);
 
           const totalBits = (4 + length) * 8;
-          const allBits = readBitsFromImageData(imgData, totalBits);
+          const allBits = readBitsFromImageData(imgData, totalBits, 'lsb');
           const allBytes = bitsToUint8Array(allBits);
-          const payload = new TextDecoder().decode(allBytes.slice(4));
+          let payload = new TextDecoder().decode(allBytes.slice(4));
+
+          // Check for mode header
+          let mode: EncodingMode = 'lsb';
+          if (payload.startsWith("MODE:")) {
+            const modeEnd = payload.indexOf(":", 5);
+            const modeStr = payload.slice(5, modeEnd) as EncodingMode;
+            if (['lsb', 'multi-bit', 'random-pixel', 'edge-based'].includes(modeStr)) {
+              mode = modeStr;
+              payload = payload.slice(modeEnd + 1);
+              setTerminalLines((prev) => [...prev, `[OK] Algorithm: ${mode.toUpperCase()}`]);
+
+              if (mode !== 'lsb') {
+                // Re-read with correct mode
+                const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
+                const reHeaderBits = readBitsFromImageData(imgData, 32, mode, keyNum);
+                const reHeaderBytes = bitsToUint8Array(reHeaderBits);
+                const reLength = (reHeaderBytes[0] << 24) | (reHeaderBytes[1] << 16) | (reHeaderBytes[2] << 8) | reHeaderBytes[3];
+                if (reLength > 0 && reLength <= 500_000) {
+                  const reTotalBits = (4 + reLength) * 8;
+                  const reAllBits = readBitsFromImageData(imgData, reTotalBits, mode, keyNum);
+                  const reAllBytes = bitsToUint8Array(reAllBits);
+                  let rePayload = new TextDecoder().decode(reAllBytes.slice(4));
+                  if (rePayload.startsWith("MODE:")) {
+                    const reModeEnd = rePayload.indexOf(":", 5);
+                    rePayload = rePayload.slice(reModeEnd + 1);
+                  }
+                  payload = rePayload;
+                }
+              }
+            }
+          }
 
           if (payload.startsWith("ENC:")) {
-            setTerminalLines((prev) => [...prev, "Encrypted payload detected 🔒", "Attempting decryption..."]);
+            setTerminalLines((prev) => [...prev, "🔒 Encrypted payload detected", "Attempting AES-256-GCM decryption..."]);
             const b64 = payload.slice(4);
             const pw = password.trim();
             if (!pw) {
-              setTerminalLines((prev) => [...prev, "ERROR: Password required for decryption"]);
+              setTerminalLines((prev) => [...prev, "[ERR] Decryption key required"]);
               setIsDecoding(false);
-              toast.error("Message is encrypted. Provide password.");
+              toast.error("Password required for decryption");
               return;
             }
             try {
               const dec = await decryptMessage(pw, b64);
-              // Check if decrypted content is a file
               if (dec.startsWith("FILE:")) {
                 const parts = dec.split(":");
                 const fileName = parts[1];
@@ -149,18 +174,18 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
                 const bytes = new Uint8Array(binary.length);
                 for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
                 setDecodedFile({ name: fileName, type: fileType, data: bytes });
-                setDecodedInfo(`Decrypted hidden file: ${fileName}`);
-                setTerminalLines((prev) => [...prev, `Decrypted file recovered: ${fileName}`, "Decode complete ✔"]);
+                setDecodedInfo(`Decrypted file: ${fileName}`);
+                setTerminalLines((prev) => [...prev, `[OK] Decrypted file: ${fileName}`, "STATUS: COMPLETE ✔"]);
               } else {
                 setDecodedMessage(dec);
-                setDecodedInfo("Decrypted using provided password");
-                setTerminalLines((prev) => [...prev, "Decryption successful ✔", "Message recovered."]);
+                setDecodedInfo("Decrypted with AES-256-GCM");
+                setTerminalLines((prev) => [...prev, "[OK] Decryption successful", "Message recovered ✔"]);
               }
               toast.success("Decoded successfully!");
             } catch {
-              setTerminalLines((prev) => [...prev, "ERROR: Decryption failed — wrong password or corrupted data"]);
+              setTerminalLines((prev) => [...prev, "[ERR] Decryption failed — invalid key"]);
               setIsDecoding(false);
-              toast.error("Decryption failed. Wrong password.");
+              toast.error("Wrong password");
               return;
             }
           } else if (payload.startsWith("FILE:")) {
@@ -172,23 +197,23 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
             const bytes = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             setDecodedFile({ name: fileName, type: fileType, data: bytes });
-            setDecodedInfo(`Hidden file recovered: ${fileName}`);
-            setTerminalLines((prev) => [...prev, `File payload detected: ${fileName}`, "File extracted ✔"]);
-            toast.success("Hidden file decoded!");
+            setDecodedInfo(`Hidden file: ${fileName}`);
+            setTerminalLines((prev) => [...prev, `File recovered: ${fileName}`, "STATUS: COMPLETE ✔"]);
+            toast.success("File decoded!");
           } else if (payload.startsWith("PLAIN:")) {
             setDecodedMessage(payload.slice(6));
-            setDecodedInfo("Plaintext message retrieved");
-            setTerminalLines((prev) => [...prev, "Plaintext payload found", "Message recovered ✔"]);
+            setDecodedInfo("Plaintext payload");
+            setTerminalLines((prev) => [...prev, "Plaintext payload extracted", "STATUS: COMPLETE ✔"]);
             toast.success("Message decoded!");
           } else {
             setDecodedMessage(payload);
-            setDecodedInfo("Raw payload (no marker found)");
-            setTerminalLines((prev) => [...prev, "Raw data extracted (unknown format)", "Done."]);
+            setDecodedInfo("Raw payload (legacy format)");
+            setTerminalLines((prev) => [...prev, "Raw data extracted", "STATUS: COMPLETE ✔"]);
             toast.success("Message decoded");
           }
         } catch (err) {
-          setTerminalLines((prev) => [...prev, `ERROR: ${(err as Error).message}`]);
-          toast.error("Decoding failed: " + (err as Error).message);
+          setTerminalLines((prev) => [...prev, `[ERR] ${(err as Error).message}`]);
+          toast.error("Decoding failed");
         } finally {
           setIsDecoding(false);
         }
@@ -199,76 +224,90 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="card-glass rounded-xl p-6">
-        <Label className="text-sm text-muted-foreground mb-3 block">Upload Encoded Image</Label>
+    <div className="space-y-4 animate-fade-in">
+      <div className="card-glass rounded-xl p-5">
+        <Label className="text-xs text-muted-foreground mb-2 block font-mono uppercase tracking-wider">// Upload Encoded Image</Label>
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={() => setDragOver(false)}
           onClick={() => fileInputRef.current?.click()}
-          className={`min-h-[180px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 mb-4 ${
+          className={`min-h-[140px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-300 mb-3 ${
             dragOver
               ? "border-[hsl(var(--decode-accent))] bg-[hsl(var(--decode-accent))]/5 glow-decode"
               : "border-border/50 hover:border-[hsl(var(--decode-accent))]/50"
           }`}
         >
-          <div className="text-muted-foreground">
-            {uploadedImage ? uploadedImage.name : "Drag & drop encoded image, or click to browse"}
+          <div className="text-muted-foreground text-sm font-mono">
+            {uploadedImage ? `> ${uploadedImage.name}` : "> Drop encoded image here"}
           </div>
-          <Button variant="outline" className="btn-decode" onClick={(e) => e.stopPropagation()}>
+          <Button variant="outline" className="btn-decode text-xs font-mono" onClick={(e) => e.stopPropagation()}>
             Browse Image
           </Button>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
         </div>
 
-        <div className="flex gap-3">
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type={showPassword ? "text" : "password"}
+                placeholder="Decryption key (if encrypted)"
+                className="flex-1 bg-background/50 pl-10 pr-10 font-mono text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <Button onClick={handleDecode} className="btn-decode font-mono text-xs" disabled={!uploadedImage || isDecoding}>
+              {isDecoding ? "[ DECODING... ]" : "[ DECODE ]"}
+            </Button>
+          </div>
           <Input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password (if encrypted)"
-            className="flex-1 bg-background/50"
+            value={embedKey}
+            onChange={(e) => setEmbedKey(e.target.value.replace(/\D/g, ''))}
+            placeholder="Embedding key (for random-pixel mode)"
+            className="bg-background/50 font-mono text-sm"
           />
-          <Button onClick={handleDecode} className="btn-decode" disabled={!uploadedImage || isDecoding}>
-            {isDecoding ? "Decoding..." : "Decode"}
-          </Button>
         </div>
       </div>
 
-      {/* Terminal Output */}
       {terminalLines.length > 0 && (
         <div className="animate-fade-in">
           <TerminalOutput lines={terminalLines} />
         </div>
       )}
 
-      {/* Decoded Message */}
       {decodedMessage && (
-        <div className="card-glass rounded-xl p-6 space-y-4 animate-fade-in">
-          <div>
-            <Label className="text-sm text-muted-foreground mb-2 block">Hidden Message</Label>
-            <Textarea value={decodedMessage} readOnly className="min-h-[200px] bg-background/50" />
-          </div>
-          <div className="text-sm text-muted-foreground">{decodedInfo}</div>
+        <div className="card-glass rounded-xl p-5 space-y-3 animate-fade-in">
+          <Label className="text-xs text-muted-foreground block font-mono uppercase tracking-wider">// Recovered Message</Label>
+          <Textarea value={decodedMessage} readOnly className="min-h-[160px] bg-background/50 font-mono text-sm" />
+          <div className="text-xs text-muted-foreground font-mono">{decodedInfo}</div>
         </div>
       )}
 
-      {/* Decoded File */}
       {decodedFile && (
-        <div className="card-glass rounded-xl p-6 space-y-4 animate-fade-in">
+        <div className="card-glass rounded-xl p-5 space-y-3 animate-fade-in">
           <div className="flex items-center justify-between">
             <div>
-              <Label className="text-sm text-muted-foreground mb-1 block">Hidden File Recovered</Label>
+              <Label className="text-xs text-muted-foreground mb-1 block font-mono uppercase tracking-wider">// Recovered File</Label>
               <p className="font-mono text-[hsl(var(--decode-accent))]">{decodedFile.name}</p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1 font-mono">
                 {(decodedFile.data.length / 1024).toFixed(1)} KB • {decodedFile.type || "unknown"}
               </p>
             </div>
-            <Button onClick={handleDownloadFile} className="btn-decode">
-              ⬇️ Download File
+            <Button onClick={handleDownloadFile} className="btn-decode font-mono text-xs">
+              ⬇ Download
             </Button>
           </div>
-          <div className="text-sm text-muted-foreground">{decodedInfo}</div>
+          <div className="text-xs text-muted-foreground font-mono">{decodedInfo}</div>
         </div>
       )}
     </div>
@@ -276,5 +315,4 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
 });
 
 DecodeTab.displayName = "DecodeTab";
-
 export default DecodeTab;

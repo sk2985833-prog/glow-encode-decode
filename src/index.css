@@ -2,42 +2,39 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
 @layer base {
   :root {
-    /* Dark theme design system for steganography app */
-    --background: 222 25% 5%;
-    --foreground: 210 40% 92%;
+    --background: 222 28% 4%;
+    --foreground: 190 30% 88%;
 
-    --card: 220 20% 8%;
-    --card-foreground: 210 40% 92%;
+    --card: 222 22% 7%;
+    --card-foreground: 190 30% 88%;
 
-    --popover: 220 20% 8%;
-    --popover-foreground: 210 40% 92%;
+    --popover: 222 22% 7%;
+    --popover-foreground: 190 30% 88%;
 
-    --primary: 210 40% 92%;
-    --primary-foreground: 222 25% 5%;
+    --primary: 190 30% 88%;
+    --primary-foreground: 222 28% 4%;
 
-    --secondary: 217 32% 17%;
-    --secondary-foreground: 210 40% 92%;
+    --secondary: 220 25% 12%;
+    --secondary-foreground: 190 30% 88%;
 
-    --muted: 217 32% 17%;
-    --muted-foreground: 215 15% 60%;
+    --muted: 220 25% 12%;
+    --muted-foreground: 215 15% 55%;
 
-    --accent: 217 32% 17%;
-    --accent-foreground: 210 40% 92%;
+    --accent: 220 25% 12%;
+    --accent-foreground: 190 30% 88%;
 
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 92%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 190 30% 88%;
 
-    --border: 217 20% 15%;
-    --input: 217 20% 15%;
-    --ring: 210 40% 92%;
+    --border: 220 20% 12%;
+    --input: 220 20% 12%;
+    --ring: 190 100% 50%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
     /* Steganography specific colors */
     --encode-accent: 190 100% 50%;
@@ -52,12 +49,12 @@ All colors MUST be HSL.
     /* Gradients */
     --gradient-encode: linear-gradient(135deg, hsl(190, 100%, 50%), hsl(240, 100%, 30%));
     --gradient-decode: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(120, 60%, 25%));
-    --gradient-bg: radial-gradient(1200px 600px at 10% 10%, hsla(190, 100%, 50%, 0.08), transparent);
+    --gradient-bg: radial-gradient(1200px 600px at 10% 10%, hsla(190, 100%, 50%, 0.06), transparent);
     
     /* Shadows */
-    --shadow-encode: 0 0 40px hsla(190, 100%, 50%, 0.15);
-    --shadow-decode: 0 0 40px hsla(142, 71%, 45%, 0.15);
-    --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
+    --shadow-encode: 0 0 30px hsla(190, 100%, 50%, 0.2);
+    --shadow-decode: 0 0 30px hsla(142, 71%, 45%, 0.2);
+    --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.5);
     
     /* Transitions */
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -71,38 +68,80 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
-    background: var(--gradient-bg), linear-gradient(180deg, hsl(var(--background)), hsl(222, 30%, 3%));
+    background: var(--gradient-bg), linear-gradient(180deg, hsl(var(--background)), hsl(222, 30%, 2%));
     min-height: 100vh;
     font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsla(190, 100%, 50%, 0.15);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsla(190, 100%, 50%, 0.3);
   }
 }
 
 @layer components {
   .tab-active-encode {
-    @apply bg-[hsl(var(--encode-accent))] text-white shadow-[var(--shadow-encode)];
+    @apply bg-[hsl(var(--encode-accent))] text-background shadow-[var(--shadow-encode)] font-semibold;
   }
   
   .tab-active-decode {
-    @apply bg-[hsl(var(--decode-accent))] text-white shadow-[var(--shadow-decode)];
+    @apply bg-[hsl(var(--decode-accent))] text-background shadow-[var(--shadow-decode)] font-semibold;
   }
   
   .btn-encode {
-    @apply bg-gradient-to-r from-[hsl(var(--encode-accent))] to-blue-900 hover:opacity-90 transition-all duration-300;
+    @apply bg-gradient-to-r from-[hsl(var(--encode-accent))] to-blue-900 hover:opacity-90 transition-all duration-300 text-background;
   }
   
   .btn-decode {
-    @apply bg-gradient-to-r from-[hsl(var(--decode-accent))] to-green-900 hover:opacity-90 transition-all duration-300;
+    @apply bg-gradient-to-r from-[hsl(var(--decode-accent))] to-green-900 hover:opacity-90 transition-all duration-300 text-background;
   }
   
   .card-glass {
-    @apply bg-card/80 backdrop-blur-md border border-border/50 shadow-[var(--shadow-card)];
+    @apply bg-card/70 backdrop-blur-md border border-border/40 shadow-[var(--shadow-card)];
   }
   
   .glow-encode {
-    box-shadow: 0 0 30px hsla(190, 100%, 50%, 0.2), 0 0 60px hsla(190, 100%, 50%, 0.1);
+    box-shadow: 0 0 20px hsla(190, 100%, 50%, 0.15), 0 0 40px hsla(190, 100%, 50%, 0.08);
   }
   
   .glow-decode {
-    box-shadow: 0 0 30px hsla(142, 71%, 45%, 0.2), 0 0 60px hsla(142, 71%, 45%, 0.1);
+    box-shadow: 0 0 20px hsla(142, 71%, 45%, 0.15), 0 0 40px hsla(142, 71%, 45%, 0.08);
+  }
+
+  /* Scanline overlay */
+  .scanlines::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      hsla(190, 100%, 50%, 0.01) 2px,
+      hsla(190, 100%, 50%, 0.01) 4px
+    );
+    pointer-events: none;
+  }
+
+  /* Glitch text effect */
+  @keyframes glitch {
+    0%, 100% { text-shadow: none; }
+    20% { text-shadow: -2px 0 hsla(190, 100%, 50%, 0.3), 2px 0 hsla(0, 100%, 50%, 0.3); }
+    40% { text-shadow: 2px 0 hsla(190, 100%, 50%, 0.3), -2px 0 hsla(142, 71%, 45%, 0.3); }
+    60% { text-shadow: -1px 0 hsla(0, 100%, 50%, 0.3), 1px 0 hsla(190, 100%, 50%, 0.3); }
+  }
+
+  .glitch-text {
+    animation: glitch 3s infinite;
   }
 }
