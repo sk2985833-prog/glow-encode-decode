@@ -12,6 +12,34 @@ export interface DecodeTabRef {
   clear: () => void;
 }
 
+const MODE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
+  lsb: { label: "LSB (Standard)", icon: "⚡", color: "text-[hsl(var(--encode-accent))]" },
+  'multi-bit': { label: "Multi-bit LSB", icon: "🔥", color: "text-orange-400" },
+  'random-pixel': { label: "Random Pixel", icon: "🎲", color: "text-purple-400" },
+  'edge-based': { label: "Edge-based", icon: "🔬", color: "text-cyan-400" },
+};
+
+function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { valid: boolean; length: number; payload: string } {
+  try {
+    const headerBits = readBitsFromImageData(imgData, 32, mode, key);
+    const headerBytes = bitsToUint8Array(headerBits);
+    const length = (headerBytes[0] << 24) | (headerBytes[1] << 16) | (headerBytes[2] << 8) | headerBytes[3];
+    if (length <= 0 || length > 500_000) return { valid: false, length: 0, payload: "" };
+
+    const totalBits = (4 + length) * 8;
+    const allBits = readBitsFromImageData(imgData, totalBits, mode, key);
+    const allBytes = bitsToUint8Array(allBits);
+    const payload = new TextDecoder().decode(allBytes.slice(4));
+
+    if (payload.startsWith("MODE:") || payload.startsWith("ENC:") || payload.startsWith("PLAIN:") || payload.startsWith("FILE:")) {
+      return { valid: true, length, payload };
+    }
+    return { valid: false, length, payload };
+  } catch {
+    return { valid: false, length: 0, payload: "" };
+  }
+}
+
 const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -23,6 +51,8 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
   const [isDecoding, setIsDecoding] = useState(false);
   const [decodedFile, setDecodedFile] = useState<{ name: string; type: string; data: Uint8Array } | null>(null);
   const [embedKey, setEmbedKey] = useState("");
+  const [detectedMode, setDetectedMode] = useState<EncodingMode | null>(null);
+  const [detectedEncrypted, setDetectedEncrypted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleClear = useCallback(() => {
@@ -33,6 +63,8 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
     setTerminalLines([]);
     setDecodedFile(null);
     setEmbedKey("");
+    setDetectedMode(null);
+    setDetectedEncrypted(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -55,11 +87,6 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
     if (file && file.type.startsWith("image/")) loadImage(file);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-
   const handleDownloadFile = () => {
     if (!decodedFile) return;
     const blob = new Blob([decodedFile.data.buffer as ArrayBuffer], { type: decodedFile.type || "application/octet-stream" });
@@ -79,6 +106,8 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
     setIsDecoding(true);
     setDecodedMessage("");
     setDecodedFile(null);
+    setDetectedMode(null);
+    setDetectedEncrypted(false);
     setTerminalLines([
       "$ stego-decoder --init",
       `Loading target: ${file.name}`,
@@ -97,63 +126,44 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
 
         try {
           const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          setTerminalLines((prev) => [...prev, "Reading LSB header [32 bits]..."]);
+          setTerminalLines((prev) => [...prev, "Auto-detecting encoding algorithm..."]);
 
-          // Try standard LSB first for header
-          const headerBits = readBitsFromImageData(imgData, 32, 'lsb');
-          const headerBytes = bitsToUint8Array(headerBits);
-          const length = (headerBytes[0] << 24) | (headerBytes[1] << 16) | (headerBytes[2] << 8) | headerBytes[3];
+          const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
+          const modes: EncodingMode[] = ['lsb', 'multi-bit', 'random-pixel', 'edge-based'];
+          let found = false;
+          let detMode: EncodingMode = 'lsb';
+          let payload = "";
 
-          if (length <= 0 || length > 500_000) {
-            setTerminalLines((prev) => [...prev, `[ERR] Invalid header: length=${length}`, "Status: NO HIDDEN DATA ✖"]);
+          // Try each mode to find valid data
+          for (const mode of modes) {
+            const key = mode === 'random-pixel' ? keyNum : undefined;
+            const result = tryReadHeader(imgData, mode, key);
+            if (result.valid) {
+              found = true;
+              detMode = mode;
+              payload = result.payload;
+              setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${mode.toUpperCase()}`]);
+              break;
+            }
+          }
+
+          if (!found) {
+            setTerminalLines((prev) => [...prev, "[ERR] No valid stego data found in any mode", "STATUS: NO HIDDEN DATA ✖"]);
             setIsDecoding(false);
             toast.error("No hidden data found");
             return;
           }
 
-          setTerminalLines((prev) => [
-            ...prev,
-            `[OK] Hidden payload detected: ${length.toLocaleString()} bytes`,
-            "Extracting embedded bits...",
-          ]);
+          setDetectedMode(detMode);
 
-          const totalBits = (4 + length) * 8;
-          const allBits = readBitsFromImageData(imgData, totalBits, 'lsb');
-          const allBytes = bitsToUint8Array(allBits);
-          let payload = new TextDecoder().decode(allBytes.slice(4));
-
-          // Check for mode header
-          let mode: EncodingMode = 'lsb';
+          // Strip MODE: header if present
           if (payload.startsWith("MODE:")) {
             const modeEnd = payload.indexOf(":", 5);
-            const modeStr = payload.slice(5, modeEnd) as EncodingMode;
-            if (['lsb', 'multi-bit', 'random-pixel', 'edge-based'].includes(modeStr)) {
-              mode = modeStr;
-              payload = payload.slice(modeEnd + 1);
-              setTerminalLines((prev) => [...prev, `[OK] Algorithm: ${mode.toUpperCase()}`]);
-
-              if (mode !== 'lsb') {
-                // Re-read with correct mode
-                const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
-                const reHeaderBits = readBitsFromImageData(imgData, 32, mode, keyNum);
-                const reHeaderBytes = bitsToUint8Array(reHeaderBits);
-                const reLength = (reHeaderBytes[0] << 24) | (reHeaderBytes[1] << 16) | (reHeaderBytes[2] << 8) | reHeaderBytes[3];
-                if (reLength > 0 && reLength <= 500_000) {
-                  const reTotalBits = (4 + reLength) * 8;
-                  const reAllBits = readBitsFromImageData(imgData, reTotalBits, mode, keyNum);
-                  const reAllBytes = bitsToUint8Array(reAllBits);
-                  let rePayload = new TextDecoder().decode(reAllBytes.slice(4));
-                  if (rePayload.startsWith("MODE:")) {
-                    const reModeEnd = rePayload.indexOf(":", 5);
-                    rePayload = rePayload.slice(reModeEnd + 1);
-                  }
-                  payload = rePayload;
-                }
-              }
-            }
+            payload = payload.slice(modeEnd + 1);
           }
 
           if (payload.startsWith("ENC:")) {
+            setDetectedEncrypted(true);
             setTerminalLines((prev) => [...prev, "🔒 Encrypted payload detected", "Attempting AES-256-GCM decryption..."]);
             const b64 = payload.slice(4);
             const pw = password.trim();
@@ -223,13 +233,15 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
     reader.readAsDataURL(file);
   };
 
+  const modeInfo = detectedMode ? MODE_LABELS[detectedMode] : null;
+
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="card-glass rounded-xl p-5">
         <Label className="text-xs text-muted-foreground mb-2 block font-mono uppercase tracking-wider">// Upload Encoded Image</Label>
         <div
           onDrop={handleDrop}
-          onDragOver={handleDragOver}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onClick={() => fileInputRef.current?.click()}
           className={`min-h-[140px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-300 mb-3 ${
@@ -241,7 +253,7 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
           <div className="text-muted-foreground text-sm font-mono">
             {uploadedImage ? `> ${uploadedImage.name}` : "> Drop encoded image here"}
           </div>
-          <Button variant="outline" className="btn-decode text-xs font-mono" onClick={(e) => e.stopPropagation()}>
+          <Button variant="outline" className="btn-decode text-xs font-mono" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
             Browse Image
           </Button>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
@@ -282,6 +294,27 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
       {terminalLines.length > 0 && (
         <div className="animate-fade-in">
           <TerminalOutput lines={terminalLines} />
+        </div>
+      )}
+
+      {/* Algorithm Detection Indicator */}
+      {detectedMode && modeInfo && (
+        <div className="card-glass rounded-xl p-4 animate-fade-in">
+          <Label className="text-xs text-muted-foreground block font-mono uppercase tracking-wider mb-3">// Detection Report</Label>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 rounded-lg bg-background/50 border border-border/30">
+              <p className="text-xs text-muted-foreground font-mono mb-1">Algorithm</p>
+              <p className={`text-sm font-bold font-mono ${modeInfo.color}`}>
+                {modeInfo.icon} {modeInfo.label}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg bg-background/50 border border-border/30">
+              <p className="text-xs text-muted-foreground font-mono mb-1">Encryption</p>
+              <p className={`text-sm font-bold font-mono ${detectedEncrypted ? "text-yellow-400" : "text-muted-foreground"}`}>
+                {detectedEncrypted ? "🔒 AES-256-GCM" : "🔓 None (Plaintext)"}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
