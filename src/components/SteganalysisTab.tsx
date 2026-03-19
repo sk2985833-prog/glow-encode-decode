@@ -175,7 +175,7 @@ export default function SteganalysisTab() {
           <div className="text-muted-foreground text-sm font-mono">
             {image ? `> ${image.name}` : "> Drop suspicious image here"}
           </div>
-          <Button variant="outline" className="text-xs font-mono border-yellow-500/50 hover:bg-yellow-500/10" onClick={(e) => e.stopPropagation()}>
+          <Button variant="outline" className="text-xs font-mono border-yellow-500/50 hover:bg-yellow-500/10" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
             Browse Image
           </Button>
           <input ref={fileRef} type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) loadImage(f); }} className="hidden" />
