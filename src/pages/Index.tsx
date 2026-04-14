@@ -12,7 +12,7 @@ import MetadataTab from "@/components/MetadataTab";
 import AttackSimulatorTab from "@/components/AttackSimulatorTab";
 import CyberGrid from "@/components/CyberGrid";
 import { toast } from "sonner";
-import { Shield, Terminal } from "lucide-react";
+import { Shield, Terminal, Lock, Search, Zap } from "lucide-react";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
 
@@ -62,25 +62,53 @@ const Index = () => {
       <CyberGrid />
 
       <div className="max-w-7xl mx-auto px-4 py-6 relative z-10">
-        {/* Header */}
-        <header className="mb-6 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[hsl(var(--encode-accent))] to-[hsl(var(--decode-accent))] flex items-center justify-center">
-              <Shield className="h-5 w-5 text-background" />
+        {/* Hero Header */}
+        <header className="mb-8">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[hsl(var(--encode-accent))] to-[hsl(var(--decode-accent))] flex items-center justify-center shadow-lg shadow-[hsl(var(--encode-accent))]/20">
+                <Shield className="h-6 w-6 text-background" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold font-mono tracking-tight flex items-center gap-2">
+                  StegLab
+                  <span className="text-xs px-2 py-0.5 rounded bg-[hsl(var(--encode-accent))]/10 text-[hsl(var(--encode-accent))] border border-[hsl(var(--encode-accent))]/20 animate-pulse">
+                    v2.0
+                  </span>
+                </h1>
+                <p className="text-sm text-muted-foreground font-mono">All-in-one Encode, Decode & Security Testing Platform</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold font-mono tracking-tight flex items-center gap-2">
-                StegLab
-                <span className="text-xs px-2 py-0.5 rounded bg-[hsl(var(--encode-accent))]/10 text-[hsl(var(--encode-accent))] border border-[hsl(var(--encode-accent))]/20">
-                  v2.0
-                </span>
-              </h1>
-              <p className="text-xs text-muted-foreground font-mono">Advanced Steganography & Steganalysis Toolkit</p>
+            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground/50">
+              <Terminal className="h-3 w-3" />
+              <span className="hidden sm:inline">Client-side • AES-256 • Multi-algorithm</span>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground/50">
-            <Terminal className="h-3 w-3" />
-            <span className="hidden sm:inline">Client-side • AES-256 • Multi-algorithm</span>
+          
+          {/* CTA Buttons */}
+          <div className="flex flex-wrap gap-3">
+            <Button
+              onClick={() => setActiveTab("encode")}
+              className="btn-encode font-mono text-sm gap-2 px-6 py-5 shadow-lg shadow-[hsl(var(--encode-accent))]/20 hover:shadow-[hsl(var(--encode-accent))]/40 transition-all"
+            >
+              <Lock className="h-4 w-4" />
+              🚀 Try Encode
+            </Button>
+            <Button
+              onClick={() => setActiveTab("decode")}
+              className="btn-decode font-mono text-sm gap-2 px-6 py-5 shadow-lg shadow-[hsl(var(--decode-accent))]/20 hover:shadow-[hsl(var(--decode-accent))]/40 transition-all"
+            >
+              <Search className="h-4 w-4" />
+              🔍 Decode Secret
+            </Button>
+            <Button
+              onClick={() => setActiveTab("analyze")}
+              variant="outline"
+              className="font-mono text-sm gap-2 px-6 py-5 border-destructive/40 text-destructive hover:bg-destructive/10 shadow-lg hover:shadow-destructive/20 transition-all"
+            >
+              <Zap className="h-4 w-4" />
+              ⚔ Test Security
+            </Button>
           </div>
         </header>
 

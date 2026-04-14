@@ -320,7 +320,20 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
 
       {decodedMessage && (
         <div className="card-glass rounded-xl p-5 space-y-3 animate-fade-in">
-          <Label className="text-xs text-muted-foreground block font-mono uppercase tracking-wider">// Recovered Message</Label>
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground block font-mono uppercase tracking-wider">// Recovered Message</Label>
+            <Button
+              variant="outline"
+              size="sm"
+              className="btn-decode font-mono text-xs gap-1"
+              onClick={() => {
+                navigator.clipboard.writeText(decodedMessage);
+                toast.success("Copied to clipboard");
+              }}
+            >
+              📋 Copy
+            </Button>
+          </div>
           <Textarea value={decodedMessage} readOnly className="min-h-[160px] bg-background/50 font-mono text-sm" />
           <div className="text-xs text-muted-foreground font-mono">{decodedInfo}</div>
         </div>

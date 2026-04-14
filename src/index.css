@@ -98,7 +98,27 @@
     @apply bg-[hsl(var(--decode-accent))] text-background shadow-[var(--shadow-decode)] font-semibold;
   }
   
-  .btn-encode {
+.btn-encode,
+.btn-decode {
+  @apply font-semibold tracking-wide;
+  position: relative;
+  overflow: hidden;
+}
+.btn-encode::after,
+.btn-decode::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
+}
+.btn-encode:hover::after,
+.btn-decode:hover::after {
+  opacity: 1;
+}
+
+.btn-encode {
     @apply bg-gradient-to-r from-[hsl(var(--encode-accent))] to-blue-900 hover:opacity-90 transition-all duration-300 text-background;
   }
   
