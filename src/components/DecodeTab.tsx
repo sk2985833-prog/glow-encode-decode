@@ -12,6 +12,10 @@ export interface DecodeTabRef {
   clear: () => void;
 }
 
+interface DecodeTabProps {
+  onHistoryAdd?: (entry: { type: "decode"; summary: string; detail?: string }) => void;
+}
+
 const MODE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
   lsb: { label: "LSB (Standard)", icon: "⚡", color: "text-[hsl(var(--encode-accent))]" },
   'multi-bit': { label: "Multi-bit LSB", icon: "🔥", color: "text-orange-400" },
@@ -40,7 +44,7 @@ function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { 
   }
 }
 
-const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
+const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, ref) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [decodedMessage, setDecodedMessage] = useState("");
