@@ -16,6 +16,9 @@ interface AttackResult {
   name: string;
   survived: boolean;
   details: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  confidence: number;
+  recommendation: string;
 }
 
 export default function AttackSimulatorTab() {
@@ -95,7 +98,10 @@ export default function AttackSimulatorTab() {
         attackResults.push({
           name: `JPEG Compression (${(jpegQuality[0] * 100).toFixed(0)}%)`,
           survived: jpegResult.survived,
-          details: jpegResult.survived ? `Data survived — ${jpegResult.length} bytes` : "Data DESTROYED — LSB bits corrupted",
+          details: jpegResult.survived ? `Data survived — ${jpegResult.length} bytes` : "Data DESTROYED — LSB bits corrupted by lossy compression",
+          severity: jpegResult.survived ? "LOW" : "CRITICAL",
+          confidence: jpegQuality[0] < 0.5 ? 98 : 85,
+          recommendation: jpegResult.survived ? "Increase compression ratio" : "Use DCT-domain embedding for JPEG resilience",
         });
         setTerminalLines((prev) => [
           ...prev,
@@ -112,6 +118,9 @@ export default function AttackSimulatorTab() {
           name: `Resize (${(resizeScale[0] * 100).toFixed(0)}% → 100%)`,
           survived: resizeResult.survived,
           details: resizeResult.survived ? `Data survived — ${resizeResult.length} bytes` : "Data DESTROYED — pixel interpolation corrupted LSBs",
+          severity: resizeResult.survived ? "LOW" : "HIGH",
+          confidence: 92,
+          recommendation: resizeResult.survived ? "Apply more aggressive scaling" : "Use frequency-domain embedding to resist resampling",
         });
         setTerminalLines((prev) => [
           ...prev,
@@ -128,6 +137,9 @@ export default function AttackSimulatorTab() {
           name: `Noise Injection (intensity: ${noiseIntensity[0]})`,
           survived: noiseResult.survived,
           details: noiseResult.survived ? `Data survived — ${noiseResult.length} bytes` : "Data DESTROYED — random noise flipped LSBs",
+          severity: noiseResult.survived ? "LOW" : "HIGH",
+          confidence: noiseIntensity[0] > 20 ? 96 : 78,
+          recommendation: noiseResult.survived ? "Increase noise intensity" : "Use error-correcting codes (ECC) for noise resilience",
         });
 
         // Attack 4: Color modification (brightness shift)
@@ -148,6 +160,9 @@ export default function AttackSimulatorTab() {
           name: "Brightness Shift (+5)",
           survived: brightResult.survived,
           details: brightResult.survived ? `Data survived — ${brightResult.length} bytes` : "Data DESTROYED — color values shifted",
+          severity: brightResult.survived ? "LOW" : "MEDIUM",
+          confidence: 88,
+          recommendation: brightResult.survived ? "Apply larger brightness delta" : "Use relative embedding that adapts to luminance changes",
         });
 
         setTerminalLines((prev) => [
@@ -226,21 +241,37 @@ export default function AttackSimulatorTab() {
 
       {results.length > 0 && (
         <div className="card-glass rounded-xl p-5 space-y-3 animate-fade-in">
-          <Label className="text-xs text-muted-foreground font-mono uppercase tracking-wider">// Attack Results</Label>
-          <div className="space-y-2">
-            {results.map((r, i) => (
-              <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border font-mono text-xs ${
-                r.survived ? "bg-[hsl(var(--decode-accent))]/5 border-[hsl(var(--decode-accent))]/30" : "bg-destructive/5 border-destructive/30"
-              }`}>
-                <span className="text-lg mt-[-2px]">{r.survived ? "✔" : "✖"}</span>
-                <div>
-                  <p className={r.survived ? "text-[hsl(var(--decode-accent))]" : "text-destructive"}>
-                    {r.name}
-                  </p>
-                  <p className="text-muted-foreground mt-0.5">{r.details}</p>
+          <Label className="text-xs text-muted-foreground font-mono uppercase tracking-wider">// Threat Assessment Report</Label>
+          <div className="space-y-3">
+            {results.map((r, i) => {
+              const sevColor = {
+                LOW: "text-[hsl(var(--decode-accent))] border-[hsl(var(--decode-accent))]/30 bg-[hsl(var(--decode-accent))]/5",
+                MEDIUM: "text-yellow-400 border-yellow-400/30 bg-yellow-400/5",
+                HIGH: "text-orange-400 border-orange-400/30 bg-orange-400/5",
+                CRITICAL: "text-destructive border-destructive/30 bg-destructive/5",
+              }[r.severity];
+
+              return (
+                <div key={i} className={`p-4 rounded-lg border font-mono text-xs ${sevColor} transition-all`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{r.survived ? "✔" : "✖"}</span>
+                      <span className="font-bold text-sm">{r.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sevColor}`}>
+                        {r.severity}
+                      </span>
+                      <span className="text-muted-foreground">
+                        Confidence: {r.confidence}%
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-muted-foreground mb-1">{r.details}</p>
+                  <p className="text-muted-foreground/70 italic">💡 {r.recommendation}</p>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="p-3 rounded-lg bg-background/50 border border-border/30">
             <p className="text-xs font-mono text-muted-foreground">
