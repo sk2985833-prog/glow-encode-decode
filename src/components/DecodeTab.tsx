@@ -195,6 +195,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, re
                 setDecodedInfo("Decrypted with AES-256-GCM");
                 setTerminalLines((prev) => [...prev, "[OK] Decryption successful", "Message recovered ✔"]);
               }
+              onHistoryAdd?.({ type: "decode", summary: dec.startsWith("FILE:") ? `Decrypted file` : `Decrypted message (${detMode})`, detail: dec.startsWith("FILE:") ? undefined : dec });
               toast.success("Decoded successfully!");
             } catch {
               setTerminalLines((prev) => [...prev, "[ERR] Decode failed"]);
@@ -213,11 +214,13 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, re
             setDecodedFile({ name: fileName, type: fileType, data: bytes });
             setDecodedInfo(`Hidden file: ${fileName}`);
             setTerminalLines((prev) => [...prev, `File recovered: ${fileName}`, "STATUS: COMPLETE ✔"]);
+            onHistoryAdd?.({ type: "decode", summary: `File recovered: ${fileName}` });
             toast.success("File decoded!");
           } else if (payload.startsWith("PLAIN:")) {
             setDecodedMessage(payload.slice(6));
             setDecodedInfo("Plaintext payload");
             setTerminalLines((prev) => [...prev, "Plaintext payload extracted", "STATUS: COMPLETE ✔"]);
+            onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: payload.slice(6) });
             toast.success("Message decoded!");
           } else {
             setDecodedMessage(payload);
