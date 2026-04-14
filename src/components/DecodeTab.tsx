@@ -12,6 +12,10 @@ export interface DecodeTabRef {
   clear: () => void;
 }
 
+interface DecodeTabProps {
+  onHistoryAdd?: (entry: { type: "decode"; summary: string; detail?: string }) => void;
+}
+
 const MODE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
   lsb: { label: "LSB (Standard)", icon: "⚡", color: "text-[hsl(var(--encode-accent))]" },
   'multi-bit': { label: "Multi-bit LSB", icon: "🔥", color: "text-orange-400" },
@@ -40,7 +44,7 @@ function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { 
   }
 }
 
-const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
+const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, ref) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [decodedMessage, setDecodedMessage] = useState("");
@@ -191,6 +195,7 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
                 setDecodedInfo("Decrypted with AES-256-GCM");
                 setTerminalLines((prev) => [...prev, "[OK] Decryption successful", "Message recovered ✔"]);
               }
+              onHistoryAdd?.({ type: "decode", summary: dec.startsWith("FILE:") ? `Decrypted file` : `Decrypted message (${detMode})`, detail: dec.startsWith("FILE:") ? undefined : dec });
               toast.success("Decoded successfully!");
             } catch {
               setTerminalLines((prev) => [...prev, "[ERR] Decode failed"]);
@@ -209,11 +214,13 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
             setDecodedFile({ name: fileName, type: fileType, data: bytes });
             setDecodedInfo(`Hidden file: ${fileName}`);
             setTerminalLines((prev) => [...prev, `File recovered: ${fileName}`, "STATUS: COMPLETE ✔"]);
+            onHistoryAdd?.({ type: "decode", summary: `File recovered: ${fileName}` });
             toast.success("File decoded!");
           } else if (payload.startsWith("PLAIN:")) {
             setDecodedMessage(payload.slice(6));
             setDecodedInfo("Plaintext payload");
             setTerminalLines((prev) => [...prev, "Plaintext payload extracted", "STATUS: COMPLETE ✔"]);
+            onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: payload.slice(6) });
             toast.success("Message decoded!");
           } else {
             setDecodedMessage(payload);

@@ -21,6 +21,7 @@ interface EncodeTabProps {
   image: HTMLImageElement | null;
   onImageLoad: (img: HTMLImageElement) => void;
   onEncoded?: (canvas: HTMLCanvasElement) => void;
+  onHistoryAdd?: (entry: { type: "encode"; summary: string; detail?: string }) => void;
 }
 
 type InputMode = "text" | "file";
@@ -32,7 +33,8 @@ const MODE_INFO: Record<EncodingMode, { label: string; icon: string; desc: strin
   'edge-based': { label: "Edge-based", icon: "🔬", desc: "Hides in edges — resists steganalysis" },
 };
 
-export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabProps) {
+export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd }: EncodeTabProps) {
+  const [encodeResult, setEncodeResult] = useState<{ mode: string; encrypted: boolean; size: number; capacity: number } | null>(null);
   const [message, setMessage] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -179,6 +181,17 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
 
       setEncodedCanvas(canvas);
       onEncoded?.(canvas);
+      setEncodeResult({
+        mode: encodingMode,
+        encrypted: !!password.trim(),
+        size: length,
+        capacity,
+      });
+      onHistoryAdd?.({
+        type: "encode",
+        summary: `Encoded ${length} bytes (${encodingMode})`,
+        detail: inputMode === "text" ? message : secretFile?.name,
+      });
       toast.success("Encoding complete!");
     } catch (err) {
       toast.error("Encoding failed: " + (err as Error).message);
@@ -373,10 +386,37 @@ export default function EncodeTab({ image, onImageLoad, onEncoded }: EncodeTabPr
         </div>
       </div>
 
-      {/* Encoded result preview */}
-      {encodedCanvas && (
-        <div className="card-glass rounded-xl p-5">
+      {/* Structured encode result */}
+      {encodedCanvas && encodeResult && (
+        <div className="card-glass rounded-xl p-5 space-y-4 animate-fade-in">
           <Label className="text-xs text-muted-foreground mb-2 block font-mono uppercase tracking-wider">// Encoded Output</Label>
+          
+          {/* Status card */}
+          <div className="p-4 rounded-lg bg-[hsl(var(--decode-accent))]/5 border border-[hsl(var(--decode-accent))]/30">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-full bg-[hsl(var(--decode-accent))] animate-pulse" />
+              <span className="text-sm font-bold font-mono text-[hsl(var(--decode-accent))]">✔ ENCODING SUCCESSFUL</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+              <div className="p-2 rounded bg-background/50">
+                <span className="text-muted-foreground">Algorithm</span>
+                <p className="text-[hsl(var(--encode-accent))] font-semibold">{MODE_INFO[encodeResult.mode as EncodingMode]?.label || encodeResult.mode}</p>
+              </div>
+              <div className="p-2 rounded bg-background/50">
+                <span className="text-muted-foreground">Encryption</span>
+                <p className={encodeResult.encrypted ? "text-yellow-400 font-semibold" : "text-muted-foreground"}>{encodeResult.encrypted ? "🔒 AES-256-GCM" : "🔓 None"}</p>
+              </div>
+              <div className="p-2 rounded bg-background/50">
+                <span className="text-muted-foreground">Payload Size</span>
+                <p className="text-foreground font-semibold">{encodeResult.size.toLocaleString()} bytes</p>
+              </div>
+              <div className="p-2 rounded bg-background/50">
+                <span className="text-muted-foreground">Capacity Used</span>
+                <p className="text-foreground font-semibold">{((encodeResult.size / encodeResult.capacity) * 100).toFixed(1)}%</p>
+              </div>
+            </div>
+          </div>
+
           <canvas
             ref={(ref) => {
               if (ref && encodedCanvas) {

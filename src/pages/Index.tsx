@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import EncodeTab from "@/components/EncodeTab";
@@ -11,6 +11,8 @@ import PixelVisualizationTab from "@/components/PixelVisualizationTab";
 import MetadataTab from "@/components/MetadataTab";
 import AttackSimulatorTab from "@/components/AttackSimulatorTab";
 import CyberGrid from "@/components/CyberGrid";
+import StatusBar from "@/components/StatusBar";
+import HistoryPanel, { HistoryEntry } from "@/components/HistoryPanel";
 import { toast } from "sonner";
 import { Shield, Terminal, Lock, Search, Zap } from "lucide-react";
 
@@ -20,7 +22,15 @@ const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [activeTab, setActiveTab] = useState<TabValue>("encode");
   const [encodedCanvas, setEncodedCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
+
+  const addHistory = useCallback((entry: Omit<HistoryEntry, "id" | "timestamp">) => {
+    setHistory((prev) => [
+      { ...entry, id: crypto.randomUUID(), timestamp: Date.now() },
+      ...prev,
+    ].slice(0, 10));
+  }, []);
 
   const handleSampleLoad = () => {
     const canvas = document.createElement("canvas");
@@ -58,10 +68,11 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen relative">
+    <div className="min-h-screen relative flex flex-col">
       <CyberGrid />
+      <StatusBar />
 
-      <div className="max-w-7xl mx-auto px-4 py-6 relative z-10">
+      <div className="max-w-7xl mx-auto px-4 py-6 relative z-10 flex-1">
         {/* Hero Header */}
         <header className="mb-8">
           <div className="flex items-start justify-between gap-4 mb-4">
@@ -73,10 +84,10 @@ const Index = () => {
                 <h1 className="text-3xl font-bold font-mono tracking-tight flex items-center gap-2">
                   StegLab
                   <span className="text-xs px-2 py-0.5 rounded bg-[hsl(var(--encode-accent))]/10 text-[hsl(var(--encode-accent))] border border-[hsl(var(--encode-accent))]/20 animate-pulse">
-                    v2.0
+                    v2.1
                   </span>
                 </h1>
-                <p className="text-sm text-muted-foreground font-mono">All-in-one Encode, Decode & Security Testing Platform</p>
+                <p className="text-sm text-muted-foreground font-mono">Cyber Intelligence & Steganography Command Center</p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground/50">
@@ -102,7 +113,7 @@ const Index = () => {
               🔍 Decode Secret
             </Button>
             <Button
-              onClick={() => setActiveTab("analyze")}
+              onClick={() => setActiveTab("attack")}
               variant="outline"
               className="font-mono text-sm gap-2 px-6 py-5 border-destructive/40 text-destructive hover:bg-destructive/10 shadow-lg hover:shadow-destructive/20 transition-all"
             >
@@ -127,10 +138,15 @@ const Index = () => {
               </TabsList>
 
               <TabsContent value="encode" className="mt-0">
-                <EncodeTab image={image} onImageLoad={setImage} onEncoded={setEncodedCanvas} />
+                <EncodeTab
+                  image={image}
+                  onImageLoad={setImage}
+                  onEncoded={setEncodedCanvas}
+                  onHistoryAdd={(e) => addHistory(e)}
+                />
               </TabsContent>
               <TabsContent value="decode" className="mt-0">
-                <DecodeTab ref={decodeTabRef} />
+                <DecodeTab ref={decodeTabRef} onHistoryAdd={(e) => addHistory(e)} />
               </TabsContent>
               <TabsContent value="analyze" className="mt-0">
                 <SteganalysisTab />
@@ -157,6 +173,7 @@ const Index = () => {
               onClear={handleClear}
               activeTab={activeTab}
             />
+            <HistoryPanel entries={history} onClearHistory={() => setHistory([])} />
           </aside>
         </div>
 
