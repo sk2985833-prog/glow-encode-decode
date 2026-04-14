@@ -168,9 +168,9 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
             const b64 = payload.slice(4);
             const pw = password.trim();
             if (!pw) {
-              setTerminalLines((prev) => [...prev, "[ERR] Decryption key required"]);
+              setTerminalLines((prev) => [...prev, "[ERR] Decode failed"]);
               setIsDecoding(false);
-              toast.error("Password required for decryption");
+              toast.error("Unable to decode message");
               return;
             }
             try {
@@ -193,9 +193,9 @@ const DecodeTab = forwardRef<DecodeTabRef>((props, ref) => {
               }
               toast.success("Decoded successfully!");
             } catch {
-              setTerminalLines((prev) => [...prev, "[ERR] Decryption failed — invalid key"]);
+              setTerminalLines((prev) => [...prev, "[ERR] Decode failed"]);
               setIsDecoding(false);
-              toast.error("Wrong password");
+              toast.error("Unable to decode message");
               return;
             }
           } else if (payload.startsWith("FILE:")) {
