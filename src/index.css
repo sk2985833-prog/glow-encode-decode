@@ -164,4 +164,24 @@
   .glitch-text {
     animation: glitch 3s infinite;
   }
+
+  /* Threat pulse */
+  @keyframes threat-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 hsla(0, 72%, 51%, 0.4); }
+    50% { box-shadow: 0 0 0 8px hsla(0, 72%, 51%, 0); }
+  }
+
+  .threat-pulse {
+    animation: threat-pulse 2s ease-in-out infinite;
+  }
+
+  /* Slide up animation for results */
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.4s ease-out forwards;
+  }
 }
