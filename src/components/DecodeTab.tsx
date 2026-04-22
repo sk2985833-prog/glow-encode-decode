@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { readBitsFromImageData, bitsToUint8Array, decryptMessage, EncodingMode } from "@/lib/steganography";
 import TerminalOutput from "./TerminalOutput";
+import InlineError from "@/components/InlineError";
 
 export interface DecodeTabRef {
   clear: () => void;
@@ -58,6 +59,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
   const [embedKey, setEmbedKey] = useState("");
   const [detectedMode, setDetectedMode] = useState<EncodingMode | null>(null);
   const [detectedEncrypted, setDetectedEncrypted] = useState(false);
+  const [validationError, setValidationError] = useState<{ code: string; title: string; reason: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleClear = useCallback(() => {
@@ -70,6 +72,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
     setEmbedKey("");
     setDetectedMode(null);
     setDetectedEncrypted(false);
+    setValidationError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -106,14 +109,28 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
 
   const handleDecode = async () => {
     const file = uploadedImage || fileInputRef.current?.files?.[0];
-    if (!file) { toast.error("Upload an image to decode"); return; }
+    setValidationError(null);
+    if (!file) {
+      const err = { code: "D-NO-INPUT", title: "No carrier supplied", reason: "Extract pipeline aborted — no encoded image is loaded.", hint: "Drop a stego-PNG into the upload zone." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · ${err.reason}`);
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      const err = { code: "D-BAD-MIME", title: "Unsupported file type", reason: `MIME=${file.type || "unknown"} — extract requires image/png or image/jpeg.`, hint: "PNG strongly recommended (JPEG is lossy)." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · mime=${file.type}`);
+      return;
+    }
 
     setIsDecoding(true);
     setDecodedMessage("");
     setDecodedFile(null);
     setDetectedMode(null);
     setDetectedEncrypted(false);
-    onLog?.("sys", "extract", `target=${file.name} · ${(file.size / 1024).toFixed(1)}KB`);
+    const t0 = performance.now();
+    onLog?.("sys",  "extract", `OP-02 / EXTRACT initiated · target=${file.name}`);
+    onLog?.("info", "extract", `file size=${(file.size / 1024).toFixed(1)}KB · mime=${file.type}`);
     setTerminalLines([
       "$ stego-decoder --init",
       `Loading target: ${file.name}`,
@@ -124,6 +141,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
     reader.onload = async (e) => {
       const img = new Image();
       img.onload = async () => {
+        onLog?.("info", "canvas", `image decoded · ${img.width}×${img.height} · alloc canvas`);
         const canvas = document.createElement("canvas");
         canvas.width = img.width;
         canvas.height = img.height;
@@ -132,6 +150,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
 
         try {
           const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          onLog?.("info", "canvas", `getImageData → Uint8ClampedArray(${imgData.data.length})`);
           setTerminalLines((prev) => [...prev, "Auto-detecting encoding algorithm..."]);
 
           const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
@@ -143,20 +162,27 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           // Try each mode to find valid data
           for (const mode of modes) {
             const key = mode === 'random-pixel' ? keyNum : undefined;
+            onLog?.("info", "extract", `probing mode=${mode}${key ? ` · key=${key}` : ""}`);
             const result = tryReadHeader(imgData, mode, key);
             if (result.valid) {
               found = true;
               detMode = mode;
               payload = result.payload;
-              onLog?.("ok", "extract", `algorithm matched: ${mode}`);
+              onLog?.("ok", "extract", `signature matched · algo=${mode} · payload=${result.length}B`);
               setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${mode.toUpperCase()}`]);
               break;
             }
           }
 
           if (!found) {
-            onLog?.("err", "extract", "no valid stego signature in cover");
+            onLog?.("err", "extract", "no valid stego signature in any of 4 modes");
             setTerminalLines((prev) => [...prev, "[ERR] No valid stego data found in any mode", "STATUS: NO HIDDEN DATA ✖"]);
+            setValidationError({
+              code: "D-NO-SIGNATURE",
+              title: "No stego signature detected",
+              reason: "Probed lsb, multi-bit, random-pixel, edge-based — none yielded a valid MODE:/ENC:/PLAIN:/FILE: header.",
+              hint: "Confirm this image was produced by StegLab. JPEG re-saves destroy LSB data.",
+            });
             setIsDecoding(false);
             toast.error("No hidden data found");
             return;
@@ -172,17 +198,28 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
 
           if (payload.startsWith("ENC:")) {
             setDetectedEncrypted(true);
+            onLog?.("info", "crypto", "ENC: prefix detected · entering AES-256-GCM unseal");
             setTerminalLines((prev) => [...prev, "🔒 Encrypted payload detected", "Attempting AES-256-GCM decryption..."]);
             const b64 = payload.slice(4);
             const pw = password.trim();
             if (!pw) {
+              onLog?.("err", "crypto", "key absent · cannot derive PBKDF2 → halt");
+              setValidationError({
+                code: "D-NO-KEY",
+                title: "Decryption key required",
+                reason: "Carrier contains an AES-256-GCM sealed payload but no key was supplied.",
+                hint: "Enter the same passphrase used during embed and re-run extract.",
+              });
               setTerminalLines((prev) => [...prev, "[ERR] Decode failed"]);
               setIsDecoding(false);
               toast.error("Unable to decode message");
               return;
             }
             try {
+              onLog?.("info", "crypto", "PBKDF2-SHA256 derive · iter=250000");
+              const tk = performance.now();
               const dec = await decryptMessage(pw, b64);
+              onLog?.("ok", "crypto", `unseal complete · ${(performance.now() - tk).toFixed(2)}ms`);
               if (dec.startsWith("FILE:")) {
                 const parts = dec.split(":");
                 const fileName = parts[1];
@@ -200,8 +237,16 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
                 setTerminalLines((prev) => [...prev, "[OK] Decryption successful", "Message recovered ✔"]);
               }
               onHistoryAdd?.({ type: "decode", summary: dec.startsWith("FILE:") ? `Decrypted file` : `Decrypted message (${detMode})`, detail: dec.startsWith("FILE:") ? undefined : dec });
+              onLog?.("ok", "extract", `OP-02 complete · ${(performance.now() - t0).toFixed(2)}ms total`);
               toast.success("Decoded successfully!");
             } catch {
+              onLog?.("err", "crypto", "GCM auth tag mismatch · wrong key or corrupted payload");
+              setValidationError({
+                code: "D-AUTH-FAIL",
+                title: "Decryption failed",
+                reason: "AES-256-GCM authentication tag did not verify. Either the key is wrong or the carrier was modified after embed.",
+                hint: "Re-check the passphrase. Even one byte change in the cover invalidates the GCM tag.",
+              });
               setTerminalLines((prev) => [...prev, "[ERR] Decode failed"]);
               setIsDecoding(false);
               toast.error("Unable to decode message");
@@ -219,12 +264,14 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             setDecodedInfo(`Hidden file: ${fileName}`);
             setTerminalLines((prev) => [...prev, `File recovered: ${fileName}`, "STATUS: COMPLETE ✔"]);
             onHistoryAdd?.({ type: "decode", summary: `File recovered: ${fileName}` });
+            onLog?.("ok", "extract", `OP-02 complete · file=${fileName} · ${bytes.length}B`);
             toast.success("File decoded!");
           } else if (payload.startsWith("PLAIN:")) {
             setDecodedMessage(payload.slice(6));
             setDecodedInfo("Plaintext payload");
             setTerminalLines((prev) => [...prev, "Plaintext payload extracted", "STATUS: COMPLETE ✔"]);
             onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: payload.slice(6) });
+            onLog?.("ok", "extract", `OP-02 complete · plaintext · ${payload.length - 6}B`);
             toast.success("Message decoded!");
           } else {
             setDecodedMessage(payload);
@@ -233,6 +280,9 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             toast.success("Message decoded");
           }
         } catch (err) {
+          const reason = (err as Error).message;
+          onLog?.("err", "extract", `pipeline exception · ${reason}`);
+          setValidationError({ code: "D-EXTRACT-FAIL", title: "Extract pipeline failed", reason, hint: "The carrier may be truncated or in an unsupported format." });
           setTerminalLines((prev) => [...prev, `[ERR] ${(err as Error).message}`]);
           toast.error("Decoding failed");
         } finally {
@@ -307,6 +357,8 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           <TerminalOutput lines={terminalLines} />
         </div>
       )}
+
+      {validationError && <InlineError {...validationError} />}
 
       {/* Algorithm Detection Indicator */}
       {detectedMode && modeInfo && (

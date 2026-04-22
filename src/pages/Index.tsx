@@ -14,6 +14,10 @@ import StatusBar from "@/components/StatusBar";
 import HistoryPanel, { HistoryEntry } from "@/components/HistoryPanel";
 import OpsHeader from "@/components/OpsHeader";
 import SystemLog, { LogEntry } from "@/components/SystemLog";
+import AirgapIndicator from "@/components/AirgapIndicator";
+import EnginePanel from "@/components/EnginePanel";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
@@ -34,6 +38,8 @@ const Index = () => {
   const [encodedCanvas, setEncodedCanvas] = useState<HTMLCanvasElement | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [scanCount, setScanCount] = useState(0);
+  const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
 
   const sessionId = useMemo(() => {
@@ -70,6 +76,7 @@ const Index = () => {
     ].slice(0, 10));
     const levelMap: Record<string, LogEntry["level"]> = { encode: "ok", decode: "ok", analyze: "info", attack: "warn" };
     pushLog(levelMap[entry.type] || "info", entry.type, entry.summary);
+    setScanCount((c) => c + 1);
   }, [pushLog]);
 
   // Log tab switches
@@ -108,6 +115,22 @@ const Index = () => {
     if (activeTab === "decode" && decodeTabRef.current) decodeTabRef.current.clear();
     pushLog("warn", "memory", "workspace flushed · all buffers cleared");
     toast.success("Cleared");
+  };
+
+  const handleWipeWorkspace = () => {
+    pushLog("sys", "wipe",  "OP-99 / WIPE-WORKSPACE initiated");
+    pushLog("info", "wipe", "zeroing image buffer · canvas → null");
+    setImage(null);
+    pushLog("info", "wipe", "discarding encoded canvas · pixel data released");
+    setEncodedCanvas(null);
+    if (decodeTabRef.current) {
+      pushLog("info", "wipe", "clearing decode tab · password & payload buffers wiped");
+      decodeTabRef.current.clear();
+    }
+    pushLog("info", "wipe", `purging history · ${history.length} entries`);
+    setHistory([]);
+    pushLog("ok", "wipe", "workspace zeroed · GC eligible · op complete");
+    toast.success("Workspace wiped — all buffers zeroed");
   };
 
   const tabClass = (tab: TabValue) => {
@@ -186,6 +209,16 @@ const Index = () => {
               onClear={handleClear}
               activeTab={activeTab}
             />
+            <AirgapIndicator />
+            <EnginePanel scanCount={scanCount} lastScanMs={lastScanMs} />
+            <Button
+              onClick={handleWipeWorkspace}
+              variant="outline"
+              className="w-full font-mono text-[11px] gap-2 h-9 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+              OP-99 / WIPE WORKSPACE
+            </Button>
             <SystemLog entries={logs} onClear={() => setLogs([])} />
             <HistoryPanel entries={history} onClearHistory={() => setHistory([])} />
           </aside>
