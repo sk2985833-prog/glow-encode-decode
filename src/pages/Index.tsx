@@ -41,6 +41,7 @@ const Index = () => {
   const [scanCount, setScanCount] = useState(0);
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
+  const lastOpStartRef = useRef<number | null>(null);
 
   const sessionId = useMemo(() => {
     const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
@@ -48,6 +49,13 @@ const Index = () => {
   }, []);
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
+    if (level === "sys" && /initiated/i.test(message)) {
+      lastOpStartRef.current = performance.now();
+    }
+    if (level === "ok" && /complete/i.test(message) && lastOpStartRef.current != null) {
+      setLastScanMs(performance.now() - lastOpStartRef.current);
+      lastOpStartRef.current = null;
+    }
     setLogs((prev) => [
       ...prev,
       { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
