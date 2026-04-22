@@ -22,6 +22,7 @@ interface EncodeTabProps {
   onImageLoad: (img: HTMLImageElement) => void;
   onEncoded?: (canvas: HTMLCanvasElement) => void;
   onHistoryAdd?: (entry: { type: "encode"; summary: string; detail?: string }) => void;
+  onLog?: (level: "info" | "ok" | "warn" | "err" | "sys", source: string, message: string) => void;
 }
 
 type InputMode = "text" | "file";
@@ -33,7 +34,7 @@ const MODE_INFO: Record<EncodingMode, { label: string; icon: string; desc: strin
   'edge-based': { label: "Edge-based", icon: "🔬", desc: "Hides in edges — resists steganalysis" },
 };
 
-export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd }: EncodeTabProps) {
+export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd, onLog }: EncodeTabProps) {
   const [encodeResult, setEncodeResult] = useState<{ mode: string; encrypted: boolean; size: number; capacity: number } | null>(null);
   const [message, setMessage] = useState("");
   const [password, setPassword] = useState("");
@@ -118,6 +119,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd 
 
     setEncoding(true);
     setProgress(0);
+    onLog?.("sys", "embed", `engaging cipher · mode=${encodingMode} · encrypt=${!!password.trim()}`);
 
     try {
       let payloadStr: string;
@@ -162,6 +164,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd 
       combined.set(payloadBytes, 4);
 
       const bits = uint8ToBitArray(combined);
+      onLog?.("info", "embed", `payload=${length}B · bitstream=${bits.length} bits · cap=${capacity}B`);
       const canvas = document.createElement("canvas");
       canvas.width = image.width;
       canvas.height = image.height;
@@ -181,6 +184,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd 
 
       setEncodedCanvas(canvas);
       onEncoded?.(canvas);
+      onLog?.("ok", "embed", `cover modulated · ${length}B injected via ${encodingMode}`);
       setEncodeResult({
         mode: encodingMode,
         encrypted: !!password.trim(),

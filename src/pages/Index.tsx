@@ -1,6 +1,5 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import EncodeTab from "@/components/EncodeTab";
 import DecodeTab, { DecodeTabRef } from "@/components/DecodeTab";
 import ImagePreview from "@/components/ImagePreview";
@@ -13,24 +12,71 @@ import AttackSimulatorTab from "@/components/AttackSimulatorTab";
 import CyberGrid from "@/components/CyberGrid";
 import StatusBar from "@/components/StatusBar";
 import HistoryPanel, { HistoryEntry } from "@/components/HistoryPanel";
+import OpsHeader from "@/components/OpsHeader";
+import SystemLog, { LogEntry } from "@/components/SystemLog";
 import { toast } from "sonner";
-import { Shield, Terminal, Lock, Search, Zap } from "lucide-react";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
+
+const TAB_CODES: Record<TabValue, { code: string; label: string; icon: string }> = {
+  encode:    { code: "OP-01", label: "EMBED",    icon: "🔒" },
+  decode:    { code: "OP-02", label: "EXTRACT",  icon: "🔓" },
+  analyze:   { code: "OP-03", label: "ANALYZE",  icon: "🔍" },
+  visualize: { code: "OP-04", label: "PIXELS",   icon: "👁" },
+  metadata:  { code: "OP-05", label: "EXIF",     icon: "📋" },
+  attack:    { code: "OP-06", label: "RED-TEAM", icon: "⚔" },
+  learn:     { code: "OP-07", label: "DOCS",     icon: "🎓" },
+};
 
 const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [activeTab, setActiveTab] = useState<TabValue>("encode");
   const [encodedCanvas, setEncodedCanvas] = useState<HTMLCanvasElement | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
+
+  const sessionId = useMemo(() => {
+    const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
+    return `SL-${new Date().getFullYear()}-${rand}`;
+  }, []);
+
+  const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
+    setLogs((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
+    ].slice(-80));
+  }, []);
+
+  // Boot sequence
+  useEffect(() => {
+    const seq: Array<[LogEntry["level"], string, string]> = [
+      ["sys",  "kernel",  "steglab kernel boot ─ build 2.1.0"],
+      ["info", "crypto",  "subtlecrypto.handshake → AES-256-GCM ready"],
+      ["info", "crypto",  "kdf=PBKDF2-SHA256 iterations=250000"],
+      ["info", "engine",  "loaded modes: lsb · multi-bit · random-pixel · edge-based"],
+      ["ok",   "session", `session ${sessionId} established · channel=isolated`],
+      ["info", "monitor", "input watchers attached · awaiting operator"],
+    ];
+    seq.forEach(([lvl, src, msg], i) => {
+      setTimeout(() => pushLog(lvl, src, msg), 180 * (i + 1));
+    });
+  }, [pushLog, sessionId]);
 
   const addHistory = useCallback((entry: Omit<HistoryEntry, "id" | "timestamp">) => {
     setHistory((prev) => [
       { ...entry, id: crypto.randomUUID(), timestamp: Date.now() },
       ...prev,
     ].slice(0, 10));
-  }, []);
+    const levelMap: Record<string, LogEntry["level"]> = { encode: "ok", decode: "ok", analyze: "info", attack: "warn" };
+    pushLog(levelMap[entry.type] || "info", entry.type, entry.summary);
+  }, [pushLog]);
+
+  // Log tab switches
+  useEffect(() => {
+    const t = TAB_CODES[activeTab];
+    pushLog("info", "router", `→ ${t.code} / ${t.label}`);
+  }, [activeTab, pushLog]);
 
   const handleSampleLoad = () => {
     const canvas = document.createElement("canvas");
@@ -48,7 +94,11 @@ const Index = () => {
     }
     const url = canvas.toDataURL();
     const img = new Image();
-    img.onload = () => { setImage(img); toast.success("Sample image loaded"); };
+    img.onload = () => {
+      setImage(img);
+      pushLog("ok", "loader", `sample cover loaded · ${img.width}×${img.height}px`);
+      toast.success("Sample image loaded");
+    };
     img.src = url;
   };
 
@@ -56,6 +106,7 @@ const Index = () => {
     setImage(null);
     setEncodedCanvas(null);
     if (activeTab === "decode" && decodeTabRef.current) decodeTabRef.current.clear();
+    pushLog("warn", "memory", "workspace flushed · all buffers cleared");
     toast.success("Cleared");
   };
 
@@ -67,74 +118,35 @@ const Index = () => {
     return "text-xs font-mono tab-active-encode";
   };
 
+  const opCount = history.length;
+  const activeOpCode = TAB_CODES[activeTab].code;
+
   return (
     <div className="min-h-screen relative flex flex-col">
       <CyberGrid />
-      <StatusBar />
+      <StatusBar opCount={opCount} activeOp={activeOpCode} />
 
-      <div className="max-w-7xl mx-auto px-4 py-6 relative z-10 flex-1">
-        {/* Hero Header */}
-        <header className="mb-8">
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[hsl(var(--encode-accent))] to-[hsl(var(--decode-accent))] flex items-center justify-center shadow-lg shadow-[hsl(var(--encode-accent))]/20">
-                <Shield className="h-6 w-6 text-background" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold font-mono tracking-tight flex items-center gap-2">
-                  StegLab
-                  <span className="text-xs px-2 py-0.5 rounded bg-[hsl(var(--encode-accent))]/10 text-[hsl(var(--encode-accent))] border border-[hsl(var(--encode-accent))]/20 animate-pulse">
-                    v2.1
-                  </span>
-                </h1>
-                <p className="text-sm text-muted-foreground font-mono">Cyber Intelligence & Steganography Command Center</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground/50">
-              <Terminal className="h-3 w-3" />
-              <span className="hidden sm:inline">Client-side • AES-256 • Multi-algorithm</span>
-            </div>
-          </div>
-          
-          {/* CTA Buttons */}
-          <div className="flex flex-wrap gap-3">
-            <Button
-              onClick={() => setActiveTab("encode")}
-              className="btn-encode font-mono text-sm gap-2 px-6 py-5 shadow-lg shadow-[hsl(var(--encode-accent))]/20 hover:shadow-[hsl(var(--encode-accent))]/40 transition-all"
-            >
-              <Lock className="h-4 w-4" />
-              🚀 Try Encode
-            </Button>
-            <Button
-              onClick={() => setActiveTab("decode")}
-              className="btn-decode font-mono text-sm gap-2 px-6 py-5 shadow-lg shadow-[hsl(var(--decode-accent))]/20 hover:shadow-[hsl(var(--decode-accent))]/40 transition-all"
-            >
-              <Search className="h-4 w-4" />
-              🔍 Decode Secret
-            </Button>
-            <Button
-              onClick={() => setActiveTab("attack")}
-              variant="outline"
-              className="font-mono text-sm gap-2 px-6 py-5 border-destructive/40 text-destructive hover:bg-destructive/10 shadow-lg hover:shadow-destructive/20 transition-all"
-            >
-              <Zap className="h-4 w-4" />
-              ⚔ Test Security
-            </Button>
-          </div>
-        </header>
+      <div className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
+        <OpsHeader sessionId={sessionId} onNav={(t) => setActiveTab(t)} />
 
         {/* Main Content */}
         <div className="grid lg:grid-cols-[1fr_360px] gap-4">
           <div>
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
-              <TabsList className="grid w-full grid-cols-7 mb-4 h-10 bg-card/60 backdrop-blur-sm">
-                <TabsTrigger value="encode" className={tabClass("encode")}>🔒 Encode</TabsTrigger>
-                <TabsTrigger value="decode" className={tabClass("decode")}>🔓 Decode</TabsTrigger>
-                <TabsTrigger value="analyze" className={tabClass("analyze")}>🔍 Analyze</TabsTrigger>
-                <TabsTrigger value="visualize" className={tabClass("visualize")}>👁 Pixels</TabsTrigger>
-                <TabsTrigger value="metadata" className={tabClass("metadata")}>📋 EXIF</TabsTrigger>
-                <TabsTrigger value="attack" className={tabClass("attack")}>⚔ Attack</TabsTrigger>
-                <TabsTrigger value="learn" className={tabClass("learn")}>🎓 Learn</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-7 mb-4 h-12 bg-card/60 backdrop-blur-sm border border-border/40 p-1">
+                {(Object.keys(TAB_CODES) as TabValue[]).map((t) => {
+                  const meta = TAB_CODES[t];
+                  return (
+                    <TabsTrigger
+                      key={t}
+                      value={t}
+                      className={`${tabClass(t)} flex flex-col items-center justify-center gap-0 h-full leading-tight`}
+                    >
+                      <span className="text-[9px] tracking-widest opacity-70">{meta.code}</span>
+                      <span className="text-[10px] font-bold tracking-wide">{meta.icon} {meta.label}</span>
+                    </TabsTrigger>
+                  );
+                })}
               </TabsList>
 
               <TabsContent value="encode" className="mt-0">
@@ -143,10 +155,11 @@ const Index = () => {
                   onImageLoad={setImage}
                   onEncoded={setEncodedCanvas}
                   onHistoryAdd={(e) => addHistory(e)}
+                  onLog={pushLog}
                 />
               </TabsContent>
               <TabsContent value="decode" className="mt-0">
-                <DecodeTab ref={decodeTabRef} onHistoryAdd={(e) => addHistory(e)} />
+                <DecodeTab ref={decodeTabRef} onHistoryAdd={(e) => addHistory(e)} onLog={pushLog} />
               </TabsContent>
               <TabsContent value="analyze" className="mt-0">
                 <SteganalysisTab />
@@ -173,6 +186,7 @@ const Index = () => {
               onClear={handleClear}
               activeTab={activeTab}
             />
+            <SystemLog entries={logs} onClear={() => setLogs([])} />
             <HistoryPanel entries={history} onClearHistory={() => setHistory([])} />
           </aside>
         </div>
@@ -185,12 +199,19 @@ const Index = () => {
         )}
 
         {/* Footer */}
-        <footer className="mt-10 text-center text-xs text-muted-foreground space-y-1 font-mono">
-          <p>© 2025 StegLab — Advanced Steganography & Steganalysis Toolkit</p>
-          <p className="text-muted-foreground/50">⚠ Use responsibly. Respect privacy and legal regulations.</p>
-          <p className="mt-2">
-            Developed by <span className="font-semibold text-[hsl(var(--encode-accent))]">Lithickkumar</span>
-          </p>
+        <footer className="mt-8 border-t border-border/30 pt-4 grid sm:grid-cols-3 gap-2 text-[10px] font-mono text-muted-foreground/60">
+          <div>
+            <span className="text-muted-foreground/40">// build</span><br />
+            steglab/2.1.0 · enterprise · {new Date().getFullYear()}.{(new Date().getMonth() + 1).toString().padStart(2, "0")}
+          </div>
+          <div className="sm:text-center">
+            <span className="text-muted-foreground/40">// runtime</span><br />
+            client-side · zero-egress · webcrypto.subtle
+          </div>
+          <div className="sm:text-right">
+            <span className="text-muted-foreground/40">// engineered by</span><br />
+            <span className="text-[hsl(var(--encode-accent))]">LITHICKKUMAR</span> · research &amp; education
+          </div>
         </footer>
       </div>
     </div>
