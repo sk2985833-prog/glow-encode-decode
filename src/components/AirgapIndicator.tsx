@@ -21,20 +21,19 @@ export default function AirgapIndicator() {
       setEgressAttempts(counter);
       return origFetch.apply(window, args as Parameters<typeof fetch>);
     };
-    // @ts-expect-error monkey-patch
     window.fetch = patchedFetch;
 
     const OrigXHR = window.XMLHttpRequest;
-    class AuditXHR extends OrigXHR {
-      open(...args: Parameters<XMLHttpRequest["open"]>) {
-        counter += 1;
-        setEgressAttempts(counter);
-        // @ts-expect-error spread into super
-        return super.open(...args);
-      }
-    }
-    // @ts-expect-error monkey-patch
-    window.XMLHttpRequest = AuditXHR;
+    const origOpen = OrigXHR.prototype.open;
+    OrigXHR.prototype.open = function (
+      this: XMLHttpRequest,
+      ...args: unknown[]
+    ) {
+      counter += 1;
+      setEgressAttempts(counter);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return origOpen.apply(this, args as any);
+    } as XMLHttpRequest["open"];
 
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
@@ -45,7 +44,7 @@ export default function AirgapIndicator() {
 
     return () => {
       window.fetch = origFetch;
-      window.XMLHttpRequest = OrigXHR;
+      OrigXHR.prototype.open = origOpen;
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       clearInterval(tick);
