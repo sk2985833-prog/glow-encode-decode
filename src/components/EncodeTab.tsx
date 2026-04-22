@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { Eye, EyeOff, KeyRound, Shuffle } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import InlineError from "@/components/InlineError";
 import {
   stringToUint8Array,
   uint8ToBitArray,
@@ -46,6 +47,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
   const [secretFile, setSecretFile] = useState<File | null>(null);
   const [encodingMode, setEncodingMode] = useState<EncodingMode>("lsb");
   const [embedKey, setEmbedKey] = useState("");
+  const [validationError, setValidationError] = useState<{ code: string; title: string; reason: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const secretFileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -113,19 +115,39 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
   };
 
   const handleEncode = async () => {
-    if (!image) { toast.error("Load an image first"); return; }
-    if (inputMode === "text" && !message.trim()) { toast.error("Type a message to embed"); return; }
-    if (inputMode === "file" && !secretFile) { toast.error("Select a file to hide"); return; }
+    setValidationError(null);
+    if (!image) {
+      const err = { code: "E-NO-COVER", title: "Cover image required", reason: "Embed pipeline aborted — no ImageData buffer is loaded for the cover.", hint: "Drop a PNG/JPEG into the upload zone above." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · ${err.reason}`);
+      return;
+    }
+    if (inputMode === "text" && !message.trim()) {
+      const err = { code: "E-EMPTY-PAYLOAD", title: "Empty payload rejected", reason: "Bitstream length = 0 after stringToUint8Array(). Refusing to write a no-op header.", hint: "Type a message or switch to Hide File mode." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · payload=0B`);
+      return;
+    }
+    if (inputMode === "file" && !secretFile) {
+      const err = { code: "E-NO-FILE", title: "Secret file required", reason: "FILE: payload requested but no File handle was selected.", hint: "Pick a file (≤1MB) to embed." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · file=null`);
+      return;
+    }
 
     setEncoding(true);
     setProgress(0);
-    onLog?.("sys", "embed", `engaging cipher · mode=${encodingMode} · encrypt=${!!password.trim()}`);
+    const t0 = performance.now();
+    onLog?.("sys",  "embed",  `OP-01 / EMBED initiated · mode=${encodingMode}`);
+    onLog?.("info", "embed",  `cover dims=${image.width}×${image.height} · capacity=${capacity}B`);
 
     try {
       let payloadStr: string;
       if (inputMode === "file" && secretFile) {
+        onLog?.("info", "embed", `reading file handle · ${secretFile.name} · ${(secretFile.size / 1024).toFixed(1)}KB`);
         const buffer = await secretFile.arrayBuffer();
         const bytes = new Uint8Array(buffer);
+        onLog?.("info", "embed", `arrayBuffer → uint8(${bytes.length}) · base64 encoding`);
         const b64 = btoa(String.fromCharCode(...Array.from(bytes)));
         payloadStr = `FILE:${secretFile.name}:${secretFile.type}:${b64}`;
       } else {
@@ -134,10 +156,14 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
 
       const pw = password.trim();
       if (pw) {
+        onLog?.("info", "crypto", "PBKDF2-SHA256 key derivation start · iter=250000");
+        const tk = performance.now();
         payloadStr = await encryptMessage(pw, payloadStr);
+        onLog?.("ok",   "crypto", `key derived & AES-256-GCM seal complete · ${(performance.now() - tk).toFixed(2)}ms`);
         payloadStr = "ENC:" + payloadStr;
       } else if (inputMode === "text") {
         payloadStr = "PLAIN:" + payloadStr;
+        onLog?.("warn", "crypto", "no key supplied · payload tagged PLAIN: (cleartext)");
       }
 
       // Store encoding mode in payload header
@@ -148,7 +174,14 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       const length = payloadBytes.length;
 
       if (length > capacity) {
-        toast.error(`Payload too large. Max: ${capacity} bytes. Current: ${length} bytes`);
+        const err = {
+          code: "E-CAPACITY",
+          title: "Payload exceeds cover capacity",
+          reason: `Bitstream needs ${length}B but cover (${image.width}×${image.height}, mode=${encodingMode}) only offers ${capacity}B.`,
+          hint: "Shorten the message, switch to multi-bit mode, or use a larger cover image.",
+        };
+        setValidationError(err);
+        onLog?.("err", "embed", `${err.code} · need=${length}B have=${capacity}B`);
         setEncoding(false);
         return;
       }
@@ -164,16 +197,20 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       combined.set(payloadBytes, 4);
 
       const bits = uint8ToBitArray(combined);
-      onLog?.("info", "embed", `payload=${length}B · bitstream=${bits.length} bits · cap=${capacity}B`);
+      onLog?.("info", "embed", `header=4B · payload=${length}B · bitstream=${bits.length} bits`);
+      onLog?.("info", "canvas", "allocating offscreen canvas · drawImage(cover, 0, 0)");
       const canvas = document.createElement("canvas");
       canvas.width = image.width;
       canvas.height = image.height;
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(image, 0, 0);
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      onLog?.("info", "canvas", `getImageData → Uint8ClampedArray(${imgData.data.length})`);
 
       const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
+      if (keyNum !== undefined) onLog?.("info", "embed", `keyed permutation seed=${keyNum}`);
 
+      onLog?.("sys", "embed", `bit-write start · algo=${encodingMode}`);
       await new Promise<void>((resolve) => {
         setTimeout(() => {
           writeBitsToImageData(imgData, bits, (p) => setProgress(p), encodingMode, keyNum);
@@ -181,10 +218,12 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
           resolve();
         }, 60);
       });
+      onLog?.("ok", "embed", `bit-write complete · putImageData → cover modulated`);
 
       setEncodedCanvas(canvas);
       onEncoded?.(canvas);
-      onLog?.("ok", "embed", `cover modulated · ${length}B injected via ${encodingMode}`);
+      const dt = performance.now() - t0;
+      onLog?.("ok", "embed", `OP-01 complete · ${length}B injected · ${dt.toFixed(2)}ms total`);
       setEncodeResult({
         mode: encodingMode,
         encrypted: !!password.trim(),
@@ -198,7 +237,9 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       });
       toast.success("Encoding complete!");
     } catch (err) {
-      toast.error("Encoding failed: " + (err as Error).message);
+      const reason = (err as Error).message;
+      setValidationError({ code: "E-EMBED-FAIL", title: "Embed pipeline failed", reason, hint: "Check console; the cover or payload may be malformed." });
+      onLog?.("err", "embed", `pipeline exception · ${reason}`);
     } finally {
       setEncoding(false);
       setProgress(0);
@@ -388,6 +429,9 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
             </Button>
           )}
         </div>
+        {validationError && (
+          <InlineError {...validationError} />
+        )}
       </div>
 
       {/* Structured encode result */}

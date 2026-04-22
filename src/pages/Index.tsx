@@ -14,6 +14,10 @@ import StatusBar from "@/components/StatusBar";
 import HistoryPanel, { HistoryEntry } from "@/components/HistoryPanel";
 import OpsHeader from "@/components/OpsHeader";
 import SystemLog, { LogEntry } from "@/components/SystemLog";
+import AirgapIndicator from "@/components/AirgapIndicator";
+import EnginePanel from "@/components/EnginePanel";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
@@ -34,7 +38,10 @@ const Index = () => {
   const [encodedCanvas, setEncodedCanvas] = useState<HTMLCanvasElement | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [scanCount, setScanCount] = useState(0);
+  const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
+  const lastOpStartRef = useRef<number | null>(null);
 
   const sessionId = useMemo(() => {
     const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
@@ -42,6 +49,13 @@ const Index = () => {
   }, []);
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
+    if (level === "sys" && /initiated/i.test(message)) {
+      lastOpStartRef.current = performance.now();
+    }
+    if (level === "ok" && /complete/i.test(message) && lastOpStartRef.current != null) {
+      setLastScanMs(performance.now() - lastOpStartRef.current);
+      lastOpStartRef.current = null;
+    }
     setLogs((prev) => [
       ...prev,
       { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
@@ -50,16 +64,21 @@ const Index = () => {
 
   // Boot sequence
   useEffect(() => {
+    const cryptoOk = typeof window !== "undefined" && !!window.crypto?.subtle;
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent.split(") ").pop() || "unknown" : "unknown";
     const seq: Array<[LogEntry["level"], string, string]> = [
-      ["sys",  "kernel",  "steglab kernel boot ─ build 2.1.0"],
-      ["info", "crypto",  "subtlecrypto.handshake → AES-256-GCM ready"],
-      ["info", "crypto",  "kdf=PBKDF2-SHA256 iterations=250000"],
-      ["info", "engine",  "loaded modes: lsb · multi-bit · random-pixel · edge-based"],
-      ["ok",   "session", `session ${sessionId} established · channel=isolated`],
-      ["info", "monitor", "input watchers attached · awaiting operator"],
+      ["sys",  "kernel",  `Lithick Threat Engine v2.3.1 · runtime=${ua}`],
+      ["info", "kernel",  `cores=${navigator.hardwareConcurrency || "?"} · memory=${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? "?"}GB`],
+      ["info", "crypto",  cryptoOk ? "window.crypto.subtle handshake → ok" : "WARN: subtlecrypto unavailable"],
+      ["info", "crypto",  "registering AES-256-GCM · PBKDF2-SHA256(iter=250000)"],
+      ["info", "engine",  "loading embed modes · lsb · multi-bit · random-pixel · edge-based"],
+      ["info", "engine",  "loading detectors · entropy · χ² · LSB-randomness"],
+      ["info", "airgap",  "patching window.fetch + XMLHttpRequest.open · audit attached"],
+      ["ok",   "session", `session ${sessionId} established · channel=isolated · scope=client-only`],
+      ["info", "monitor", "input watchers attached · ready for operator"],
     ];
     seq.forEach(([lvl, src, msg], i) => {
-      setTimeout(() => pushLog(lvl, src, msg), 180 * (i + 1));
+      setTimeout(() => pushLog(lvl, src, msg), 140 * (i + 1));
     });
   }, [pushLog, sessionId]);
 
@@ -70,6 +89,7 @@ const Index = () => {
     ].slice(0, 10));
     const levelMap: Record<string, LogEntry["level"]> = { encode: "ok", decode: "ok", analyze: "info", attack: "warn" };
     pushLog(levelMap[entry.type] || "info", entry.type, entry.summary);
+    setScanCount((c) => c + 1);
   }, [pushLog]);
 
   // Log tab switches
@@ -108,6 +128,22 @@ const Index = () => {
     if (activeTab === "decode" && decodeTabRef.current) decodeTabRef.current.clear();
     pushLog("warn", "memory", "workspace flushed · all buffers cleared");
     toast.success("Cleared");
+  };
+
+  const handleWipeWorkspace = () => {
+    pushLog("sys", "wipe",  "OP-99 / WIPE-WORKSPACE initiated");
+    pushLog("info", "wipe", "zeroing image buffer · canvas → null");
+    setImage(null);
+    pushLog("info", "wipe", "discarding encoded canvas · pixel data released");
+    setEncodedCanvas(null);
+    if (decodeTabRef.current) {
+      pushLog("info", "wipe", "clearing decode tab · password & payload buffers wiped");
+      decodeTabRef.current.clear();
+    }
+    pushLog("info", "wipe", `purging history · ${history.length} entries`);
+    setHistory([]);
+    pushLog("ok", "wipe", "workspace zeroed · GC eligible · op complete");
+    toast.success("Workspace wiped — all buffers zeroed");
   };
 
   const tabClass = (tab: TabValue) => {
@@ -186,6 +222,16 @@ const Index = () => {
               onClear={handleClear}
               activeTab={activeTab}
             />
+            <AirgapIndicator />
+            <EnginePanel scanCount={scanCount} lastScanMs={lastScanMs} />
+            <Button
+              onClick={handleWipeWorkspace}
+              variant="outline"
+              className="w-full font-mono text-[11px] gap-2 h-9 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+              OP-99 / WIPE WORKSPACE
+            </Button>
             <SystemLog entries={logs} onClear={() => setLogs([])} />
             <HistoryPanel entries={history} onClearHistory={() => setHistory([])} />
           </aside>
