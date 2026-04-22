@@ -155,10 +155,11 @@ const Index = () => {
                   onImageLoad={setImage}
                   onEncoded={setEncodedCanvas}
                   onHistoryAdd={(e) => addHistory(e)}
+                  onLog={pushLog}
                 />
               </TabsContent>
               <TabsContent value="decode" className="mt-0">
-                <DecodeTab ref={decodeTabRef} onHistoryAdd={(e) => addHistory(e)} />
+                <DecodeTab ref={decodeTabRef} onHistoryAdd={(e) => addHistory(e)} onLog={pushLog} />
               </TabsContent>
               <TabsContent value="analyze" className="mt-0">
                 <SteganalysisTab />

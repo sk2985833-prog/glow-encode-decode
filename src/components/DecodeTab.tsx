@@ -14,6 +14,7 @@ export interface DecodeTabRef {
 
 interface DecodeTabProps {
   onHistoryAdd?: (entry: { type: "decode"; summary: string; detail?: string }) => void;
+  onLog?: (level: "info" | "ok" | "warn" | "err" | "sys", source: string, message: string) => void;
 }
 
 const MODE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
@@ -44,7 +45,7 @@ function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { 
   }
 }
 
-const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, ref) => {
+const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLog }, ref) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [decodedMessage, setDecodedMessage] = useState("");
@@ -112,6 +113,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, re
     setDecodedFile(null);
     setDetectedMode(null);
     setDetectedEncrypted(false);
+    onLog?.("sys", "extract", `target=${file.name} · ${(file.size / 1024).toFixed(1)}KB`);
     setTerminalLines([
       "$ stego-decoder --init",
       `Loading target: ${file.name}`,
@@ -146,12 +148,14 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd }, re
               found = true;
               detMode = mode;
               payload = result.payload;
+              onLog?.("ok", "extract", `algorithm matched: ${mode}`);
               setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${mode.toUpperCase()}`]);
               break;
             }
           }
 
           if (!found) {
+            onLog?.("err", "extract", "no valid stego signature in cover");
             setTerminalLines((prev) => [...prev, "[ERR] No valid stego data found in any mode", "STATUS: NO HIDDEN DATA ✖"]);
             setIsDecoding(false);
             toast.error("No hidden data found");
