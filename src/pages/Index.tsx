@@ -56,16 +56,21 @@ const Index = () => {
 
   // Boot sequence
   useEffect(() => {
+    const cryptoOk = typeof window !== "undefined" && !!window.crypto?.subtle;
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent.split(") ").pop() || "unknown" : "unknown";
     const seq: Array<[LogEntry["level"], string, string]> = [
-      ["sys",  "kernel",  "steglab kernel boot ─ build 2.1.0"],
-      ["info", "crypto",  "subtlecrypto.handshake → AES-256-GCM ready"],
-      ["info", "crypto",  "kdf=PBKDF2-SHA256 iterations=250000"],
-      ["info", "engine",  "loaded modes: lsb · multi-bit · random-pixel · edge-based"],
-      ["ok",   "session", `session ${sessionId} established · channel=isolated`],
-      ["info", "monitor", "input watchers attached · awaiting operator"],
+      ["sys",  "kernel",  `Lithick Threat Engine v2.3.1 · runtime=${ua}`],
+      ["info", "kernel",  `cores=${navigator.hardwareConcurrency || "?"} · memory=${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? "?"}GB`],
+      ["info", "crypto",  cryptoOk ? "window.crypto.subtle handshake → ok" : "WARN: subtlecrypto unavailable"],
+      ["info", "crypto",  "registering AES-256-GCM · PBKDF2-SHA256(iter=250000)"],
+      ["info", "engine",  "loading embed modes · lsb · multi-bit · random-pixel · edge-based"],
+      ["info", "engine",  "loading detectors · entropy · χ² · LSB-randomness"],
+      ["info", "airgap",  "patching window.fetch + XMLHttpRequest.open · audit attached"],
+      ["ok",   "session", `session ${sessionId} established · channel=isolated · scope=client-only`],
+      ["info", "monitor", "input watchers attached · ready for operator"],
     ];
     seq.forEach(([lvl, src, msg], i) => {
-      setTimeout(() => pushLog(lvl, src, msg), 180 * (i + 1));
+      setTimeout(() => pushLog(lvl, src, msg), 140 * (i + 1));
     });
   }, [pushLog, sessionId]);
 
