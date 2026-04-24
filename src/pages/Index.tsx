@@ -17,10 +17,16 @@ import SystemLog, { LogEntry } from "@/components/SystemLog";
 import AirgapIndicator from "@/components/AirgapIndicator";
 import EnginePanel from "@/components/EnginePanel";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, ShieldHalf, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
+import ThreatScanTab from "@/components/threat/ThreatScanTab";
+import EncodeDecodeTab from "@/components/threat/EncodeDecodeTab";
+import type { EngineMode } from "@/lib/threatClient";
+import { SIGNATURES_LOADED } from "@/lib/threatEngineCore";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
+type ThreatTabValue = "codec" | "scan";
+type Domain = "stego" | "threat";
 
 const TAB_CODES: Record<TabValue, { code: string; label: string; icon: string }> = {
   encode:    { code: "OP-01", label: "EMBED",    icon: "🔒" },
@@ -32,6 +38,11 @@ const TAB_CODES: Record<TabValue, { code: string; label: string; icon: string }>
   learn:     { code: "OP-07", label: "DOCS",     icon: "🎓" },
 };
 
+const THREAT_TAB_CODES: Record<ThreatTabValue, { code: string; label: string; icon: string }> = {
+  codec: { code: "OP-08", label: "CODEC", icon: "↔" },
+  scan:  { code: "OP-09", label: "THREAT-SCAN", icon: "🛡" },
+};
+
 const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [activeTab, setActiveTab] = useState<TabValue>("encode");
@@ -40,6 +51,9 @@ const Index = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [scanCount, setScanCount] = useState(0);
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
+  const [domain, setDomain] = useState<Domain>("stego");
+  const [threatTab, setThreatTab] = useState<ThreatTabValue>("scan");
+  const [engineMode, setEngineMode] = useState<EngineMode>("local");
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const lastOpStartRef = useRef<number | null>(null);
 
@@ -94,9 +108,20 @@ const Index = () => {
 
   // Log tab switches
   useEffect(() => {
+    if (domain !== "stego") return;
     const t = TAB_CODES[activeTab];
     pushLog("info", "router", `→ ${t.code} / ${t.label}`);
-  }, [activeTab, pushLog]);
+  }, [activeTab, pushLog, domain]);
+
+  useEffect(() => {
+    if (domain !== "threat") return;
+    const t = THREAT_TAB_CODES[threatTab];
+    pushLog("info", "router", `→ ${t.code} / ${t.label}`);
+  }, [threatTab, pushLog, domain]);
+
+  useEffect(() => {
+    pushLog("sys", "domain", `domain switched → ${domain.toUpperCase()} OPS`);
+  }, [domain, pushLog]);
 
   const handleSampleLoad = () => {
     const canvas = document.createElement("canvas");
@@ -155,7 +180,7 @@ const Index = () => {
   };
 
   const opCount = history.length;
-  const activeOpCode = TAB_CODES[activeTab].code;
+  const activeOpCode = domain === "stego" ? TAB_CODES[activeTab].code : THREAT_TAB_CODES[threatTab].code;
 
   return (
     <div className="min-h-screen relative flex flex-col">
@@ -165,9 +190,38 @@ const Index = () => {
       <div className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
         <OpsHeader sessionId={sessionId} onNav={(t) => setActiveTab(t)} />
 
+        {/* Domain switcher */}
+        <div className="mb-4 flex items-center gap-2 p-1 rounded-xl border border-border/40 bg-card/40 backdrop-blur-md w-fit">
+          <button
+            onClick={() => setDomain("stego")}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg font-mono text-xs transition-colors ${
+              domain === "stego"
+                ? "bg-[hsl(var(--encode-accent))]/20 text-[hsl(var(--encode-accent))] border border-[hsl(var(--encode-accent))]/40"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+            STEGO OPS
+            <span className="text-[9px] opacity-60">7 tools</span>
+          </button>
+          <button
+            onClick={() => setDomain("threat")}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg font-mono text-xs transition-colors ${
+              domain === "threat"
+                ? "bg-[hsl(var(--decode-accent))]/20 text-[hsl(var(--decode-accent))] border border-[hsl(var(--decode-accent))]/40"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <ShieldHalf className="h-3.5 w-3.5" />
+            THREAT OPS
+            <span className="text-[9px] opacity-60">{SIGNATURES_LOADED} sigs</span>
+          </button>
+        </div>
+
         {/* Main Content */}
         <div className="grid lg:grid-cols-[1fr_360px] gap-4">
           <div>
+            {domain === "stego" && (
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
               <TabsList className="grid w-full grid-cols-7 mb-4 h-12 bg-card/60 backdrop-blur-sm border border-border/40 p-1">
                 {(Object.keys(TAB_CODES) as TabValue[]).map((t) => {
@@ -213,15 +267,55 @@ const Index = () => {
                 <LearnTab />
               </TabsContent>
             </Tabs>
+            )}
+
+            {domain === "threat" && (
+              <Tabs value={threatTab} onValueChange={(v) => setThreatTab(v as ThreatTabValue)}>
+                <TabsList className="grid w-full grid-cols-2 mb-4 h-12 bg-card/60 backdrop-blur-sm border border-border/40 p-1">
+                  {(Object.keys(THREAT_TAB_CODES) as ThreatTabValue[]).map((t) => {
+                    const meta = THREAT_TAB_CODES[t];
+                    const active = threatTab === t;
+                    return (
+                      <TabsTrigger
+                        key={t}
+                        value={t}
+                        className={`text-xs font-mono ${active ? "tab-active-decode" : ""} flex flex-col items-center justify-center gap-0 h-full leading-tight`}
+                      >
+                        <span className="text-[9px] tracking-widest opacity-70">{meta.code}</span>
+                        <span className="text-[10px] font-bold tracking-wide">{meta.icon} {meta.label}</span>
+                      </TabsTrigger>
+                    );
+                  })}
+                </TabsList>
+                <TabsContent value="codec" className="mt-0">
+                  <EncodeDecodeTab
+                    mode={engineMode}
+                    onModeChange={setEngineMode}
+                    onLog={pushLog}
+                    onHistoryAdd={addHistory}
+                  />
+                </TabsContent>
+                <TabsContent value="scan" className="mt-0">
+                  <ThreatScanTab
+                    mode={engineMode}
+                    onModeChange={setEngineMode}
+                    onLog={pushLog}
+                    onHistoryAdd={addHistory}
+                  />
+                </TabsContent>
+              </Tabs>
+            )}
           </div>
 
           <aside className="lg:sticky lg:top-6 h-fit space-y-4">
+            {domain === "stego" && (
             <ImagePreview
               image={image}
               onSampleLoad={handleSampleLoad}
               onClear={handleClear}
               activeTab={activeTab}
             />
+            )}
             <AirgapIndicator />
             <EnginePanel scanCount={scanCount} lastScanMs={lastScanMs} />
             <Button
