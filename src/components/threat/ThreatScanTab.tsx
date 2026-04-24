@@ -119,7 +119,7 @@ export default function ThreatScanTab({ mode, onModeChange, onLog, onHistoryAdd 
           </div>
         </div>
 
-        {err && <InlineError title="ANALYZE FAILED" message={err} />}
+        {err && <InlineError code="E_ANALYZE" title="ANALYZE FAILED" reason={err} />}
       </div>
 
       <PipelinePanel stages={stages} running={running} />
