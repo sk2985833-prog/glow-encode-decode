@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface StatusBarProps {
   opCount?: number;
@@ -7,18 +8,25 @@ interface StatusBarProps {
 
 export default function StatusBar({ opCount = 0, activeOp = "IDLE" }: StatusBarProps) {
   const [time, setTime] = useState(new Date());
-  const [load, setLoad] = useState({ cpu: 12, mem: 34, net: 0 });
+  const [load, setLoad] = useState<{ cpu: number; mem: number; live: boolean }>({ cpu: 0, mem: 0, live: false });
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
-    const l = setInterval(() => {
-      setLoad({
-        cpu: 8 + Math.floor(Math.random() * 14),
-        mem: 28 + Math.floor(Math.random() * 12),
-        net: Math.floor(Math.random() * 4),
-      });
-    }, 1500);
-    return () => { clearInterval(t); clearInterval(l); };
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("system-stats", { method: "GET" });
+        if (cancelled || error || !data) return;
+        setLoad({
+          cpu: Math.round(data.cpu?.percent ?? 0),
+          mem: Math.round(data.memory?.percent ?? 0),
+          live: true,
+        });
+      } catch { /* offline → keep last known */ }
+    };
+    poll();
+    const l = setInterval(poll, 1000);
+    return () => { cancelled = true; clearInterval(t); clearInterval(l); };
   }, []);
 
   const utc = time.toISOString().slice(11, 19);
@@ -40,15 +48,19 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE" }: StatusBarP
           </span>
           <span className="flex items-center gap-1.5 border-l border-border/30 pl-4">
             <span className="text-muted-foreground/40">CPU</span>
-            <span className="tabular-nums text-foreground/80">{load.cpu.toString().padStart(2, "0")}%</span>
+            <MetricBar pct={load.cpu} live={load.live} />
+            <span className="tabular-nums text-foreground/80 w-9 text-right">{load.live ? `${load.cpu.toString().padStart(2, "0")}%` : "--%"}</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="text-muted-foreground/40">MEM</span>
-            <span className="tabular-nums text-foreground/80">{load.mem.toString().padStart(2, "0")}%</span>
+            <MetricBar pct={load.mem} live={load.live} />
+            <span className="tabular-nums text-foreground/80 w-9 text-right">{load.live ? `${load.mem.toString().padStart(2, "0")}%` : "--%"}</span>
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="text-muted-foreground/40">NET</span>
-            <span className="tabular-nums text-[hsl(var(--decode-accent))]">OFFLINE</span>
+            <span className="text-muted-foreground/40">SRC</span>
+            <span className={`tabular-nums ${load.live ? "text-[hsl(var(--decode-accent))]" : "text-muted-foreground/60"}`}>
+              {load.live ? "LIVE" : "PEND"}
+            </span>
           </span>
           <span className="flex items-center gap-1.5 border-l border-border/30 pl-4">
             <span className="text-muted-foreground/40">OPS</span>
@@ -69,5 +81,19 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE" }: StatusBarP
         </div>
       </div>
     </div>
+  );
+}
+
+function MetricBar({ pct, live }: { pct: number; live: boolean }) {
+  const w = Math.max(0, Math.min(100, pct));
+  const color =
+    !live ? "bg-muted-foreground/30"
+    : w > 80 ? "bg-destructive"
+    : w > 60 ? "bg-yellow-500"
+    : "bg-[hsl(var(--decode-accent))]";
+  return (
+    <span className="inline-block w-12 h-1.5 rounded-sm bg-border/40 overflow-hidden">
+      <span className={`block h-full ${color} transition-all`} style={{ width: `${w}%` }} />
+    </span>
   );
 }
