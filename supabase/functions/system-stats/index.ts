@@ -22,9 +22,10 @@ Deno.serve((req) => {
   // Normalize 1-min loadavg into a 0..100 percent over available cores.
   const cpuPct = Math.max(0, Math.min(100, (loadavg[0] / cores) * 100));
 
-  const memUsedPct = sysMem
-    ? Math.max(0, Math.min(100, ((sysMem.total - sysMem.available) / sysMem.total) * 100))
-    : Math.max(0, Math.min(100, (proc.heapUsed / proc.heapTotal) * 100));
+  const sysAvail = sysMem && sysMem.total > 0 ? sysMem : null;
+  const memUsedPct = sysAvail
+    ? Math.max(0, Math.min(100, ((sysAvail.total - sysAvail.available) / sysAvail.total) * 100))
+    : Math.max(0, Math.min(100, (proc.heapUsed / Math.max(1, proc.heapTotal)) * 100));
 
   const body = {
     status: "success",
@@ -35,11 +36,12 @@ Deno.serve((req) => {
       percent: +cpuPct.toFixed(2),
     },
     memory: {
-      total: sysMem?.total ?? proc.heapTotal,
-      free: sysMem?.free ?? null,
-      available: sysMem?.available ?? null,
-      used: sysMem ? sysMem.total - sysMem.available : proc.heapUsed,
+      total: sysAvail?.total ?? proc.heapTotal,
+      free: sysAvail?.free ?? null,
+      available: sysAvail?.available ?? null,
+      used: sysAvail ? sysAvail.total - sysAvail.available : proc.heapUsed,
       percent: +memUsedPct.toFixed(2),
+      mode: sysAvail ? "host" : "heap",
       processRss: proc.rss,
       heapUsed: proc.heapUsed,
       heapTotal: proc.heapTotal,
