@@ -9,6 +9,7 @@ import { transform, type EngineMode } from "@/lib/threatClient";
 import { detectEncoding, type EncType } from "@/lib/threatEngineCore";
 import EngineModeToggle from "./EngineModeToggle";
 import InlineError from "@/components/InlineError";
+import InlineWarning from "@/components/InlineWarning";
 import { ArrowRightLeft, Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { LogEntry } from "@/components/SystemLog";
@@ -18,6 +19,56 @@ interface Props {
   onModeChange: (m: EngineMode) => void;
   onLog: (level: LogEntry["level"], source: string, msg: string) => void;
   onHistoryAdd?: (e: { type: "encode" | "decode"; summary: string; detail?: string }) => void;
+}
+
+const MAX_INPUT = 10_000;
+const NEAR_LIMIT = 9_000;
+
+const FORMAT_RX: Record<EncType, RegExp> = {
+  base64: /^[A-Za-z0-9+/\s]+={0,2}$/,
+  url:    /%[0-9a-fA-F]{2}/,
+  hex:    /^[0-9a-fA-F\s]+$/,
+  binary: /^[01\s]+$/,
+};
+
+/** Pre-flight check — runs locally before any backend dispatch. */
+function preflight(input: string, op: "encode" | "decode", type: EncType | "auto"):
+  | { kind: "limit"; pct: number }
+  | { kind: "mismatch"; type: EncType; reason: string }
+  | { kind: "undetectable" }
+  | null
+{
+  const len = input.length;
+  if (len >= NEAR_LIMIT) return { kind: "limit", pct: Math.round((len / MAX_INPUT) * 100) };
+
+  // Format checks only meaningful when decoding; encoding accepts any text.
+  if (op !== "decode" || !input.trim()) return null;
+
+  if (type === "auto") {
+    if (!detectEncoding(input)) return { kind: "undetectable" };
+    return null;
+  }
+
+  const trimmed = input.trim();
+  const rx = FORMAT_RX[type];
+  if (!rx.test(trimmed)) {
+    const map: Record<EncType, string> = {
+      base64: "Contains characters outside the Base64 alphabet (A–Z, a–z, 0–9, +, /, =).",
+      url:    "No percent-encoded sequences (%XX) found.",
+      hex:    "Contains non-hex characters (expected 0–9, a–f).",
+      binary: "Contains characters other than 0 and 1.",
+    };
+    return { kind: "mismatch", type, reason: map[type] };
+  }
+  // Length-modulo checks
+  const stripped = trimmed.replace(/\s/g, "");
+  if (type === "base64" && stripped.length % 4 !== 0)
+    return { kind: "mismatch", type, reason: `Base64 length must be a multiple of 4 (got ${stripped.length}).` };
+  if (type === "hex" && stripped.length % 2 !== 0)
+    return { kind: "mismatch", type, reason: `Hex length must be even (got ${stripped.length}).` };
+  if (type === "binary" && stripped.length % 8 !== 0)
+    return { kind: "mismatch", type, reason: `Binary length must be a multiple of 8 (got ${stripped.length}).` };
+  return null;
 }
 
 export default function EncodeDecodeTab({ mode, onModeChange, onLog, onHistoryAdd }: Props) {
@@ -30,10 +81,19 @@ export default function EncodeDecodeTab({ mode, onModeChange, onLog, onHistoryAd
   const [err, setErr] = useState<string | null>(null);
   const debounceRef = useRef<number | null>(null);
 
+  const warning = preflight(input, op, type);
+
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     if (!input.trim()) { setOutput(""); setDetected(null); setErr(null); return; }
     setDetected(detectEncoding(input));
+    // Skip backend dispatch if pre-flight produced a blocking-class warning
+    // (mismatch / undetectable). Limit warnings are advisory only.
+    const pre = preflight(input, op, type);
+    if (pre && (pre.kind === "mismatch" || pre.kind === "undetectable")) {
+      setOutput("");
+      return;
+    }
     debounceRef.current = window.setTimeout(() => { void run(); }, 300);
     return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,6 +203,31 @@ export default function EncodeDecodeTab({ mode, onModeChange, onLog, onHistoryAd
             />
           </div>
         </div>
+
+        {warning && warning.kind === "limit" && (
+          <InlineWarning
+            code="W_NEAR_LIMIT"
+            title="APPROACHING INPUT LIMIT"
+            reason={`Input is ${input.length.toLocaleString()} / ${MAX_INPUT.toLocaleString()} chars (${warning.pct}%). Backend will reject anything over ${MAX_INPUT.toLocaleString()}.`}
+            hint="Trim the payload or split it into smaller chunks."
+          />
+        )}
+        {warning && warning.kind === "mismatch" && (
+          <InlineWarning
+            code="W_FORMAT_MISMATCH"
+            title={`INPUT DOES NOT LOOK LIKE ${warning.type.toUpperCase()}`}
+            reason={warning.reason}
+            hint="Switch the codec to auto-detect or pick the matching format."
+          />
+        )}
+        {warning && warning.kind === "undetectable" && (
+          <InlineWarning
+            code="W_NO_CODEC"
+            title="UNRECOGNIZED CODEC"
+            reason="Auto-detect could not match the input to Base64, URL, Hex, or Binary."
+            hint="Pick the codec manually if you know the format."
+          />
+        )}
 
         {err && <InlineError code="E_CODEC" title={`${op.toUpperCase()} FAILED`} reason={err} />}
 
