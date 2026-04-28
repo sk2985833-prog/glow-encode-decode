@@ -8,6 +8,7 @@ import ThreatReportCard from "./ThreatReportCard";
 import PipelinePanel from "./PipelinePanel";
 import EngineModeToggle from "./EngineModeToggle";
 import InlineError from "@/components/InlineError";
+import InlineWarning from "@/components/InlineWarning";
 import { Play, Loader2 } from "lucide-react";
 import type { LogEntry } from "@/components/SystemLog";
 
@@ -34,6 +35,11 @@ export default function ThreatScanTab({ mode, onModeChange, onLog, onHistoryAdd 
   const [err, setErr] = useState<string | null>(null);
   const debounceRef = useRef<number | null>(null);
   const lastInputRef = useRef("");
+
+  const MAX_INPUT = 10_000;
+  const NEAR_LIMIT = 9_000;
+  const nearLimit = input.length >= NEAR_LIMIT && input.length <= MAX_INPUT;
+  const overLimit = input.length > MAX_INPUT;
 
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
@@ -120,6 +126,22 @@ export default function ThreatScanTab({ mode, onModeChange, onLog, onHistoryAdd 
         </div>
 
         {err && <InlineError code="E_ANALYZE" title="ANALYZE FAILED" reason={err} />}
+
+        {overLimit && (
+          <InlineWarning
+            code="W_OVER_LIMIT"
+            title="INPUT EXCEEDS LIMIT"
+            reason={`Input is ${input.length.toLocaleString()} / ${MAX_INPUT.toLocaleString()} chars. Backend will reject this payload.`}
+            hint="Trim before re-running."
+          />
+        )}
+        {nearLimit && (
+          <InlineWarning
+            code="W_NEAR_LIMIT"
+            title="APPROACHING INPUT LIMIT"
+            reason={`Input is ${input.length.toLocaleString()} / ${MAX_INPUT.toLocaleString()} chars (${Math.round((input.length / MAX_INPUT) * 100)}%).`}
+          />
+        )}
       </div>
 
       <PipelinePanel stages={stages} running={running} />
