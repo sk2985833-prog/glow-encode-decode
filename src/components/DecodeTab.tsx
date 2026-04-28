@@ -46,6 +46,19 @@ function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { 
   }
 }
 
+/** Strip and verify a SHA256:<hex>:<payload> envelope. Returns the inner payload. Throws on mismatch. */
+async function verifyAndStripChecksum(payload: string): Promise<string> {
+  if (!payload.startsWith("SHA256:")) return payload; // legacy: no checksum
+  const sep = payload.indexOf(":", 7);
+  if (sep < 0) throw new Error("Malformed SHA256 envelope");
+  const expected = payload.slice(7, sep).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error("Malformed SHA256 envelope");
+  const inner = payload.slice(sep + 1);
+  const actual = (await sha256Hex(inner)).toLowerCase();
+  if (actual !== expected) throw new Error("SHA-256 checksum mismatch");
+  return inner;
+}
+
 const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLog }, ref) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
