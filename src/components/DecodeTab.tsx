@@ -237,8 +237,24 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             try {
               onLog?.("info", "crypto", "PBKDF2-SHA256 derive · iter=250000");
               const tk = performance.now();
-              const dec = await decryptMessage(pw, b64);
+              let dec = await decryptMessage(pw, b64);
               onLog?.("ok", "crypto", `unseal complete · ${(performance.now() - tk).toFixed(2)}ms`);
+              try {
+                const before = dec;
+                dec = await verifyAndStripChecksum(dec);
+                if (before !== dec) onLog?.("ok", "integrity", `SHA-256 verified`);
+              } catch (vErr) {
+                onLog?.("err", "integrity", (vErr as Error).message);
+                setValidationError({
+                  code: "D-CHECKSUM",
+                  title: "Integrity check failed",
+                  reason: "SHA-256 of recovered payload does not match the embedded checksum.",
+                  hint: "Carrier was modified post-embed (compression, resize, or tamper).",
+                });
+                setIsDecoding(false);
+                toast.error("Checksum mismatch");
+                return;
+              }
               if (dec.startsWith("FILE:")) {
                 const parts = dec.split(":");
                 const fileName = parts[1];
@@ -272,10 +288,16 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
               return;
             }
           } else if (payload.startsWith("FILE:")) {
-            const parts = payload.split(":");
+            let cleared = payload;
+            try { cleared = await verifyAndStripChecksum(cleared); } catch (vErr) {
+              onLog?.("err", "integrity", (vErr as Error).message);
+              setValidationError({ code: "D-CHECKSUM", title: "Integrity check failed", reason: (vErr as Error).message });
+              setIsDecoding(false); toast.error("Checksum mismatch"); return;
+            }
+            const parts = cleared.split(":");
             const fileName = parts[1];
             const fileType = parts[2];
-            const b64Data = payload.slice(`FILE:${fileName}:${fileType}:`.length);
+            const b64Data = cleared.slice(`FILE:${fileName}:${fileType}:`.length);
             const binary = atob(b64Data);
             const bytes = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -286,11 +308,18 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             onLog?.("ok", "extract", `OP-02 complete · file=${fileName} · ${bytes.length}B`);
             toast.success("File decoded!");
           } else if (payload.startsWith("PLAIN:")) {
-            setDecodedMessage(payload.slice(6));
-            setDecodedInfo("Plaintext payload");
+            let inner = payload.slice(6);
+            try { inner = await verifyAndStripChecksum(inner); onLog?.("ok", "integrity", `SHA-256 verified`); }
+            catch (vErr) {
+              onLog?.("err", "integrity", (vErr as Error).message);
+              setValidationError({ code: "D-CHECKSUM", title: "Integrity check failed", reason: (vErr as Error).message });
+              setIsDecoding(false); toast.error("Checksum mismatch"); return;
+            }
+            setDecodedMessage(inner);
+            setDecodedInfo("Plaintext payload · SHA-256 verified");
             setTerminalLines((prev) => [...prev, "Plaintext payload extracted", "STATUS: COMPLETE ✔"]);
-            onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: payload.slice(6) });
-            onLog?.("ok", "extract", `OP-02 complete · plaintext · ${payload.length - 6}B`);
+            onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: inner });
+            onLog?.("ok", "extract", `OP-02 complete · plaintext · ${inner.length}B`);
             toast.success("Message decoded!");
           } else {
             setDecodedMessage(payload);
