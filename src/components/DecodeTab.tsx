@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
-import { readBitsFromImageData, bitsToUint8Array, decryptMessage, EncodingMode } from "@/lib/steganography";
+import { readBitsFromImageData, bitsToUint8Array, decryptMessage, sha256Hex, EncodingMode } from "@/lib/steganography";
 import TerminalOutput from "./TerminalOutput";
 import InlineError from "@/components/InlineError";
 
@@ -118,6 +118,12 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
     }
     if (!file.type.startsWith("image/")) {
       const err = { code: "D-BAD-MIME", title: "Unsupported file type", reason: `MIME=${file.type || "unknown"} — extract requires image/png or image/jpeg.`, hint: "PNG strongly recommended (JPEG is lossy)." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · mime=${file.type}`);
+      return;
+    }
+    if (file.type !== "image/png" && !/\.png$/i.test(file.name)) {
+      const err = { code: "D-NOT-PNG", title: "PNG required", reason: `MIME=${file.type || "unknown"} — only lossless PNG carriers are accepted (JPEG destroys LSB data).`, hint: "Re-encode the carrier as PNG." };
       setValidationError(err);
       onLog?.("err", "validate", `${err.code} · mime=${file.type}`);
       return;
