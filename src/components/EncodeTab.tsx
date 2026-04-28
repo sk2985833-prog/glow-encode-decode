@@ -16,6 +16,7 @@ import {
   generatePassword,
   calculateCapacity,
   EncodingMode,
+  sha256Hex,
 } from "@/lib/steganography";
 
 interface EncodeTabProps {
@@ -56,10 +57,16 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
 
   const loadImage = useCallback(
     (file: File) => {
-      const MAX_FILE_SIZE = 50_000_000;
+      const MAX_FILE_SIZE = 500_000_000; // 500 MB
       const MAX_DIMENSION = 8192;
+      const isPng =
+        file.type === "image/png" || /\.png$/i.test(file.name);
+      if (!isPng) {
+        toast.error("Only PNG (lossless) is accepted. JPG/WebP are rejected.");
+        return;
+      }
       if (file.size > MAX_FILE_SIZE) {
-        toast.error(`Image too large. Max: ${MAX_FILE_SIZE / 1_000_000}MB`);
+        toast.error(`Image too large. Max: 500MB`);
         return;
       }
       const url = URL.createObjectURL(file);
@@ -72,7 +79,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
         }
         onImageLoad(img);
         URL.revokeObjectURL(url);
-        toast.success(`Image loaded: ${img.width}×${img.height}`);
+        toast.success(`PNG cover loaded: ${img.width}×${img.height}`);
       };
       img.src = url;
     },
@@ -153,6 +160,11 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       } else {
         payloadStr = message;
       }
+
+      // SHA-256 integrity tag over the original payload (pre-encryption)
+      const checksum = await sha256Hex(payloadStr);
+      onLog?.("info", "integrity", `SHA-256 computed · ${checksum.slice(0, 16)}…`);
+      payloadStr = `SHA256:${checksum}:${payloadStr}`;
 
       const pw = password.trim();
       if (pw) {
@@ -281,7 +293,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
           <Button variant="outline" className="btn-encode text-xs" onClick={(e) => e.stopPropagation()}>
             Browse Image
           </Button>
-          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
+          <input ref={fileInputRef} type="file" accept="image/png,.png" onChange={handleFileSelect} className="hidden" />
           {image && (
             <div className="text-xs text-muted-foreground font-mono">
               {image.width}×{image.height} | {Math.round((image.width * image.height) / 1000)}k px | {capacity.toLocaleString()} byte capacity

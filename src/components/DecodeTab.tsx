@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
-import { readBitsFromImageData, bitsToUint8Array, decryptMessage, EncodingMode } from "@/lib/steganography";
+import { readBitsFromImageData, bitsToUint8Array, decryptMessage, sha256Hex, EncodingMode } from "@/lib/steganography";
 import TerminalOutput from "./TerminalOutput";
 import InlineError from "@/components/InlineError";
 
@@ -44,6 +44,19 @@ function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { 
   } catch {
     return { valid: false, length: 0, payload: "" };
   }
+}
+
+/** Strip and verify a SHA256:<hex>:<payload> envelope. Returns the inner payload. Throws on mismatch. */
+async function verifyAndStripChecksum(payload: string): Promise<string> {
+  if (!payload.startsWith("SHA256:")) return payload; // legacy: no checksum
+  const sep = payload.indexOf(":", 7);
+  if (sep < 0) throw new Error("Malformed SHA256 envelope");
+  const expected = payload.slice(7, sep).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error("Malformed SHA256 envelope");
+  const inner = payload.slice(sep + 1);
+  const actual = (await sha256Hex(inner)).toLowerCase();
+  if (actual !== expected) throw new Error("SHA-256 checksum mismatch");
+  return inner;
 }
 
 const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLog }, ref) => {
@@ -118,6 +131,12 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
     }
     if (!file.type.startsWith("image/")) {
       const err = { code: "D-BAD-MIME", title: "Unsupported file type", reason: `MIME=${file.type || "unknown"} — extract requires image/png or image/jpeg.`, hint: "PNG strongly recommended (JPEG is lossy)." };
+      setValidationError(err);
+      onLog?.("err", "validate", `${err.code} · mime=${file.type}`);
+      return;
+    }
+    if (file.type !== "image/png" && !/\.png$/i.test(file.name)) {
+      const err = { code: "D-NOT-PNG", title: "PNG required", reason: `MIME=${file.type || "unknown"} — only lossless PNG carriers are accepted (JPEG destroys LSB data).`, hint: "Re-encode the carrier as PNG." };
       setValidationError(err);
       onLog?.("err", "validate", `${err.code} · mime=${file.type}`);
       return;
@@ -218,8 +237,24 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             try {
               onLog?.("info", "crypto", "PBKDF2-SHA256 derive · iter=250000");
               const tk = performance.now();
-              const dec = await decryptMessage(pw, b64);
+              let dec = await decryptMessage(pw, b64);
               onLog?.("ok", "crypto", `unseal complete · ${(performance.now() - tk).toFixed(2)}ms`);
+              try {
+                const before = dec;
+                dec = await verifyAndStripChecksum(dec);
+                if (before !== dec) onLog?.("ok", "integrity", `SHA-256 verified`);
+              } catch (vErr) {
+                onLog?.("err", "integrity", (vErr as Error).message);
+                setValidationError({
+                  code: "D-CHECKSUM",
+                  title: "Integrity check failed",
+                  reason: "SHA-256 of recovered payload does not match the embedded checksum.",
+                  hint: "Carrier was modified post-embed (compression, resize, or tamper).",
+                });
+                setIsDecoding(false);
+                toast.error("Checksum mismatch");
+                return;
+              }
               if (dec.startsWith("FILE:")) {
                 const parts = dec.split(":");
                 const fileName = parts[1];
@@ -253,10 +288,16 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
               return;
             }
           } else if (payload.startsWith("FILE:")) {
-            const parts = payload.split(":");
+            let cleared = payload;
+            try { cleared = await verifyAndStripChecksum(cleared); } catch (vErr) {
+              onLog?.("err", "integrity", (vErr as Error).message);
+              setValidationError({ code: "D-CHECKSUM", title: "Integrity check failed", reason: (vErr as Error).message });
+              setIsDecoding(false); toast.error("Checksum mismatch"); return;
+            }
+            const parts = cleared.split(":");
             const fileName = parts[1];
             const fileType = parts[2];
-            const b64Data = payload.slice(`FILE:${fileName}:${fileType}:`.length);
+            const b64Data = cleared.slice(`FILE:${fileName}:${fileType}:`.length);
             const binary = atob(b64Data);
             const bytes = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -267,11 +308,18 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             onLog?.("ok", "extract", `OP-02 complete · file=${fileName} · ${bytes.length}B`);
             toast.success("File decoded!");
           } else if (payload.startsWith("PLAIN:")) {
-            setDecodedMessage(payload.slice(6));
-            setDecodedInfo("Plaintext payload");
+            let inner = payload.slice(6);
+            try { inner = await verifyAndStripChecksum(inner); onLog?.("ok", "integrity", `SHA-256 verified`); }
+            catch (vErr) {
+              onLog?.("err", "integrity", (vErr as Error).message);
+              setValidationError({ code: "D-CHECKSUM", title: "Integrity check failed", reason: (vErr as Error).message });
+              setIsDecoding(false); toast.error("Checksum mismatch"); return;
+            }
+            setDecodedMessage(inner);
+            setDecodedInfo("Plaintext payload · SHA-256 verified");
             setTerminalLines((prev) => [...prev, "Plaintext payload extracted", "STATUS: COMPLETE ✔"]);
-            onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: payload.slice(6) });
-            onLog?.("ok", "extract", `OP-02 complete · plaintext · ${payload.length - 6}B`);
+            onHistoryAdd?.({ type: "decode", summary: `Decoded plaintext (${detMode})`, detail: inner });
+            onLog?.("ok", "extract", `OP-02 complete · plaintext · ${inner.length}B`);
             toast.success("Message decoded!");
           } else {
             setDecodedMessage(payload);
@@ -317,7 +365,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           <Button variant="outline" className="btn-decode text-xs font-mono" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
             Browse Image
           </Button>
-          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
+          <input ref={fileInputRef} type="file" accept="image/png,.png" onChange={handleFileSelect} className="hidden" />
         </div>
 
         <div className="space-y-2">
