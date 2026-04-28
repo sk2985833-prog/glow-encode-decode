@@ -365,7 +365,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           <Button variant="outline" className="btn-decode text-xs font-mono" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
             Browse Image
           </Button>
-          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
+          <input ref={fileInputRef} type="file" accept="image/png,.png" onChange={handleFileSelect} className="hidden" />
         </div>
 
         <div className="space-y-2">
