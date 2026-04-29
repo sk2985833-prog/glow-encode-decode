@@ -2,6 +2,20 @@
 
 export type EncodingMode = 'lsb' | 'multi-bit' | 'random-pixel' | 'edge-based';
 
+/** Bits per blue-channel pixel for the standard LSB mode. 1 = safest, 4 = max capacity but visible. */
+export type LsbDepth = 1 | 2 | 3 | 4;
+export const DEFAULT_LSB_DEPTH: LsbDepth = 1;
+
+/** Qualitative reliability rating per depth. */
+export function lsbReliability(depth: LsbDepth): { label: string; tone: "safe" | "ok" | "warn" | "risk"; note: string } {
+  switch (depth) {
+    case 1: return { label: "Excellent",   tone: "safe", note: "Imperceptible · max robustness · standard LSB" };
+    case 2: return { label: "Good",        tone: "ok",   note: "≈2× capacity · minor χ² signature increase" };
+    case 3: return { label: "Marginal",    tone: "warn", note: "≈3× capacity · visible on flat regions, detectable" };
+    case 4: return { label: "Poor",        tone: "risk", note: "4× capacity · visible artifacts · trivially detectable" };
+  }
+}
+
 export function stringToUint8Array(str: string): Uint8Array {
   return new TextEncoder().encode(str);
 }
@@ -36,27 +50,43 @@ export function writeBitsToImageData(
   bits: number[],
   onProgress?: (progress: number) => void,
   mode: EncodingMode = 'lsb',
-  key?: number
+  key?: number,
+  depth: LsbDepth = DEFAULT_LSB_DEPTH
 ): ImageData {
   switch (mode) {
     case 'multi-bit':
       return writeBitsMultiBit(imgData, bits, onProgress);
     case 'random-pixel':
-      return writeBitsRandomPixel(imgData, bits, onProgress, key);
+      return writeBitsRandomPixel(imgData, bits, onProgress, key, depth);
     case 'edge-based':
-      return writeBitsEdgeBased(imgData, bits, onProgress);
+      return writeBitsEdgeBased(imgData, bits, onProgress, depth);
     default:
-      return writeBitsLSB(imgData, bits, onProgress);
+      return writeBitsLSB(imgData, bits, onProgress, depth);
   }
 }
 
-function writeBitsLSB(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void): ImageData {
+function writeBitsLSB(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void, depth: LsbDepth = DEFAULT_LSB_DEPTH): ImageData {
   const data = imgData.data;
   const total = bits.length;
-  for (let i = 0; i < total; i++) {
-    const idx = i * 4 + 2; // Blue channel
-    data[idx] = (data[idx] & 0xfe) | bits[i];
-    if (onProgress && i % 1000 === 0) onProgress(Math.floor((i / total) * 100));
+  const mask = 0xff << depth & 0xff; // clear lowest `depth` bits
+  let bi = 0;
+  let px = 0;
+  while (bi < total) {
+    const idx = px * 4 + 2; // Blue channel
+    let pack = 0;
+    let written = 0;
+    for (let d = depth - 1; d >= 0 && bi < total; d--) {
+      pack |= (bits[bi++] & 1) << d;
+      written++;
+    }
+    // pad unused low bits with the original to minimize visible disturbance
+    if (written < depth) {
+      const origLow = data[idx] & ((1 << (depth - written)) - 1);
+      pack = (pack & ~((1 << (depth - written)) - 1)) | origLow;
+    }
+    data[idx] = (data[idx] & mask) | pack;
+    px++;
+    if (onProgress && (px & 1023) === 0) onProgress(Math.floor((bi / total) * 100));
   }
   if (onProgress) onProgress(100);
   return imgData;
@@ -92,25 +122,28 @@ function seededShuffle(length: number, seed: number): number[] {
   return indices;
 }
 
-function writeBitsRandomPixel(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void, key?: number): ImageData {
+function writeBitsRandomPixel(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void, key?: number, depth: LsbDepth = DEFAULT_LSB_DEPTH): ImageData {
   const data = imgData.data;
   const total = bits.length;
   const pixelCount = data.length / 4;
   const seed = key || 483920;
   const order = seededShuffle(pixelCount, seed);
-  
-  for (let i = 0; i < total; i++) {
-    const pxIdx = order[i];
-    const idx = pxIdx * 4 + 2; // Blue channel
-    data[idx] = (data[idx] & 0xfe) | bits[i];
-    if (onProgress && i % 1000 === 0) onProgress(Math.floor((i / total) * 100));
+  const mask = 0xff << depth & 0xff;
+  let bi = 0;
+  let oi = 0;
+  while (bi < total) {
+    const idx = order[oi++] * 4 + 2;
+    let pack = 0;
+    for (let d = depth - 1; d >= 0 && bi < total; d--) pack |= (bits[bi++] & 1) << d;
+    data[idx] = (data[idx] & mask) | pack;
+    if (onProgress && (oi & 1023) === 0) onProgress(Math.floor((bi / total) * 100));
   }
   if (onProgress) onProgress(100);
   return imgData;
 }
 
 // --- Edge-based embedding (hide in high-contrast edges) ---
-function writeBitsEdgeBased(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void): ImageData {
+function writeBitsEdgeBased(imgData: ImageData, bits: number[], onProgress?: (progress: number) => void, depth: LsbDepth = DEFAULT_LSB_DEPTH): ImageData {
   const data = imgData.data;
   const w = imgData.width;
   const total = bits.length;
@@ -129,15 +162,20 @@ function writeBitsEdgeBased(imgData: ImageData, bits: number[], onProgress?: (pr
     }
   }
   
-  // Fallback to standard if not enough edges
-  if (edgePixels.length < total) {
-    return writeBitsLSB(imgData, bits, onProgress);
+  // Fallback to standard if not enough edges (per-pixel capacity = depth)
+  if (edgePixels.length * depth < total) {
+    return writeBitsLSB(imgData, bits, onProgress, depth);
   }
-  
-  for (let i = 0; i < total; i++) {
-    const idx = edgePixels[i] + 2; // Blue channel
-    data[idx] = (data[idx] & 0xfe) | bits[i];
-    if (onProgress && i % 1000 === 0) onProgress(Math.floor((i / total) * 100));
+
+  const mask = 0xff << depth & 0xff;
+  let bi = 0;
+  let ei = 0;
+  while (bi < total) {
+    const idx = edgePixels[ei++] + 2;
+    let pack = 0;
+    for (let d = depth - 1; d >= 0 && bi < total; d--) pack |= (bits[bi++] & 1) << d;
+    data[idx] = (data[idx] & mask) | pack;
+    if (onProgress && (ei & 1023) === 0) onProgress(Math.floor((bi / total) * 100));
   }
   if (onProgress) onProgress(100);
   return imgData;
@@ -148,25 +186,29 @@ export function readBitsFromImageData(
   imgData: ImageData,
   bitCount: number,
   mode: EncodingMode = 'lsb',
-  key?: number
+  key?: number,
+  depth: LsbDepth = DEFAULT_LSB_DEPTH
 ): number[] {
   switch (mode) {
     case 'multi-bit':
       return readBitsMultiBit(imgData, bitCount);
     case 'random-pixel':
-      return readBitsRandomPixel(imgData, bitCount, key);
+      return readBitsRandomPixel(imgData, bitCount, key, depth);
     case 'edge-based':
-      return readBitsEdgeBased(imgData, bitCount);
+      return readBitsEdgeBased(imgData, bitCount, depth);
     default:
-      return readBitsLSB(imgData, bitCount);
+      return readBitsLSB(imgData, bitCount, depth);
   }
 }
 
-function readBitsLSB(imgData: ImageData, bitCount: number): number[] {
+function readBitsLSB(imgData: ImageData, bitCount: number, depth: LsbDepth = DEFAULT_LSB_DEPTH): number[] {
   const data = imgData.data;
   const bits: number[] = [];
-  for (let i = 0; i < bitCount; i++) {
-    bits.push(data[i * 4 + 2] & 1);
+  let px = 0;
+  while (bits.length < bitCount) {
+    const v = data[px * 4 + 2];
+    for (let d = depth - 1; d >= 0 && bits.length < bitCount; d--) bits.push((v >> d) & 1);
+    px++;
   }
   return bits;
 }
@@ -185,19 +227,21 @@ function readBitsMultiBit(imgData: ImageData, bitCount: number): number[] {
   return bits;
 }
 
-function readBitsRandomPixel(imgData: ImageData, bitCount: number, key?: number): number[] {
+function readBitsRandomPixel(imgData: ImageData, bitCount: number, key?: number, depth: LsbDepth = DEFAULT_LSB_DEPTH): number[] {
   const data = imgData.data;
   const pixelCount = data.length / 4;
   const seed = key || 483920;
   const order = seededShuffle(pixelCount, seed);
   const bits: number[] = [];
-  for (let i = 0; i < bitCount; i++) {
-    bits.push(data[order[i] * 4 + 2] & 1);
+  let oi = 0;
+  while (bits.length < bitCount) {
+    const v = data[order[oi++] * 4 + 2];
+    for (let d = depth - 1; d >= 0 && bits.length < bitCount; d--) bits.push((v >> d) & 1);
   }
   return bits;
 }
 
-function readBitsEdgeBased(imgData: ImageData, bitCount: number): number[] {
+function readBitsEdgeBased(imgData: ImageData, bitCount: number, depth: LsbDepth = DEFAULT_LSB_DEPTH): number[] {
   const data = imgData.data;
   const w = imgData.width;
   const edgePixels: number[] = [];
@@ -212,10 +256,12 @@ function readBitsEdgeBased(imgData: ImageData, bitCount: number): number[] {
       if (gradient > 30) edgePixels.push(idx);
     }
   }
-  if (edgePixels.length < bitCount) return readBitsLSB(imgData, bitCount);
+  if (edgePixels.length * depth < bitCount) return readBitsLSB(imgData, bitCount, depth);
   const bits: number[] = [];
-  for (let i = 0; i < bitCount; i++) {
-    bits.push(data[edgePixels[i] + 2] & 1);
+  let ei = 0;
+  while (bits.length < bitCount) {
+    const v = data[edgePixels[ei++] + 2];
+    for (let d = depth - 1; d >= 0 && bits.length < bitCount; d--) bits.push((v >> d) & 1);
   }
   return bits;
 }
@@ -257,7 +303,7 @@ export async function decryptMessage(password: string, b64payload: string): Prom
   return new TextDecoder().decode(dec);
 }
 
-export function calculateCapacity(width: number, height: number, mode: EncodingMode = 'lsb'): number {
+export function calculateCapacity(width: number, height: number, mode: EncodingMode = 'lsb', depth: LsbDepth = DEFAULT_LSB_DEPTH): number {
   const pixels = width * height;
   switch (mode) {
     case 'multi-bit':
@@ -265,7 +311,7 @@ export function calculateCapacity(width: number, height: number, mode: EncodingM
     case 'random-pixel':
     case 'edge-based':
     default:
-      return Math.floor((pixels - 32) / 8); // 1 bit per pixel
+      return Math.floor((pixels * depth - 32) / 8); // depth bits per pixel
   }
 }
 
