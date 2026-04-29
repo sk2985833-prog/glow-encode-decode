@@ -71,7 +71,9 @@ const Index = () => {
       setLastScanMs(performance.now() - lastOpStartRef.current);
       lastOpStartRef.current = null;
       setRuntimeOp("IDLE");
-    } else if (sourceOp && ["info", "warn", "err"].includes(level)) {
+    } else if (level === "err") {
+      setRuntimeOp("IDLE");
+    } else if (sourceOp && ["info", "warn"].includes(level)) {
       setRuntimeOp(sourceOp);
     }
     setLastActivityAt(Date.now());
@@ -174,7 +176,7 @@ const Index = () => {
   };
 
   const opCount = history.length;
-  const activeOpCode = runtimeOp === "IDLE" ? `READY ${TAB_CODES[activeTab].code}` : runtimeOp;
+  const activeOpCode = runtimeOp;
 
   return (
     <div className="min-h-screen relative flex flex-col">
