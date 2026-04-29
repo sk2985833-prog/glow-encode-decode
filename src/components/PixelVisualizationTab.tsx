@@ -103,7 +103,12 @@ export default function PixelVisualizationTab() {
           <div className="text-muted-foreground text-sm font-mono">
             {image ? `> ${image.name}` : "> Drop image to visualize"}
           </div>
-          <Button variant="outline" className="text-xs font-mono border-purple-500/50 hover:bg-purple-500/10" onClick={(e) => e.stopPropagation()}>
+          <Button
+            type="button"
+            variant="outline"
+            className="text-xs font-mono border-purple-500/50 hover:bg-purple-500/10"
+            onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+          >
             Browse Image
           </Button>
           <input ref={fileRef} type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) loadImage(f); }} className="hidden" />
