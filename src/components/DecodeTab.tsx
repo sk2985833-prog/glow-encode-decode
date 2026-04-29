@@ -440,11 +440,17 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
       {detectedMode && modeInfo && (
         <div className="card-glass rounded-xl p-4 animate-fade-in">
           <Label className="text-xs text-muted-foreground block font-mono uppercase tracking-wider mb-3">// Detection Report</Label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="p-3 rounded-lg bg-background/50 border border-border/30">
               <p className="text-xs text-muted-foreground font-mono mb-1">Algorithm</p>
               <p className={`text-sm font-bold font-mono ${modeInfo.color}`}>
                 {modeInfo.icon} {modeInfo.label}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg bg-background/50 border border-border/30">
+              <p className="text-xs text-muted-foreground font-mono mb-1">LSB Depth</p>
+              <p className="text-sm font-bold font-mono text-foreground">
+                {detectedDepth ? `${detectedDepth}-bit` : "n/a"}
               </p>
             </div>
             <div className="p-3 rounded-lg bg-background/50 border border-border/30">
