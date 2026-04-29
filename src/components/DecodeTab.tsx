@@ -4,8 +4,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound } from "lucide-react";
-import { readBitsFromImageData, bitsToUint8Array, decryptMessage, sha256Hex, EncodingMode } from "@/lib/steganography";
+import { Eye, EyeOff, KeyRound, Copy } from "lucide-react";
+import { readBitsFromImageData, bitsToUint8Array, decryptMessage, sha256Hex, EncodingMode, LsbDepth, DEFAULT_LSB_DEPTH } from "@/lib/steganography";
 import TerminalOutput from "./TerminalOutput";
 import InlineError from "@/components/InlineError";
 
@@ -25,15 +25,15 @@ const MODE_LABELS: Record<string, { label: string; icon: string; color: string }
   'edge-based': { label: "Edge-based", icon: "🔬", color: "text-cyan-400" },
 };
 
-function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number): { valid: boolean; length: number; payload: string } {
+function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number, depth: LsbDepth = DEFAULT_LSB_DEPTH): { valid: boolean; length: number; payload: string } {
   try {
-    const headerBits = readBitsFromImageData(imgData, 32, mode, key);
+    const headerBits = readBitsFromImageData(imgData, 32, mode, key, depth);
     const headerBytes = bitsToUint8Array(headerBits);
     const length = (headerBytes[0] << 24) | (headerBytes[1] << 16) | (headerBytes[2] << 8) | headerBytes[3];
     if (length <= 0 || length > 500_000) return { valid: false, length: 0, payload: "" };
 
     const totalBits = (4 + length) * 8;
-    const allBits = readBitsFromImageData(imgData, totalBits, mode, key);
+    const allBits = readBitsFromImageData(imgData, totalBits, mode, key, depth);
     const allBytes = bitsToUint8Array(allBits);
     const payload = new TextDecoder().decode(allBytes.slice(4));
 
@@ -71,6 +71,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
   const [decodedFile, setDecodedFile] = useState<{ name: string; type: string; data: Uint8Array } | null>(null);
   const [embedKey, setEmbedKey] = useState("");
   const [detectedMode, setDetectedMode] = useState<EncodingMode | null>(null);
+  const [detectedDepth, setDetectedDepth] = useState<LsbDepth | null>(null);
   const [detectedEncrypted, setDetectedEncrypted] = useState(false);
   const [validationError, setValidationError] = useState<{ code: string; title: string; reason: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -84,6 +85,7 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
     setDecodedFile(null);
     setEmbedKey("");
     setDetectedMode(null);
+    setDetectedDepth(null);
     setDetectedEncrypted(false);
     setValidationError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -176,20 +178,25 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           const modes: EncodingMode[] = ['lsb', 'multi-bit', 'random-pixel', 'edge-based'];
           let found = false;
           let detMode: EncodingMode = 'lsb';
+          let detDepth: LsbDepth = DEFAULT_LSB_DEPTH;
           let payload = "";
 
-          // Try each mode to find valid data
-          for (const mode of modes) {
+          // Try each mode × depth (1..4 for LSB-style modes) to find valid data
+          outer: for (const mode of modes) {
             const key = mode === 'random-pixel' ? keyNum : undefined;
-            onLog?.("info", "extract", `probing mode=${mode}${key ? ` · key=${key}` : ""}`);
-            const result = tryReadHeader(imgData, mode, key);
-            if (result.valid) {
-              found = true;
-              detMode = mode;
-              payload = result.payload;
-              onLog?.("ok", "extract", `signature matched · algo=${mode} · payload=${result.length}B`);
-              setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${mode.toUpperCase()}`]);
-              break;
+            const depths: LsbDepth[] = mode === 'multi-bit' ? [1] : [1, 2, 3, 4];
+            for (const d of depths) {
+              onLog?.("info", "extract", `probing mode=${mode}${mode === 'multi-bit' ? "" : ` · depth=${d}`}${key ? ` · key=${key}` : ""}`);
+              const result = tryReadHeader(imgData, mode, key, d);
+              if (result.valid) {
+                found = true;
+                detMode = mode;
+                detDepth = d;
+                payload = result.payload;
+                onLog?.("ok", "extract", `signature matched · algo=${mode}${mode === 'multi-bit' ? "" : ` · depth=${d}`} · payload=${result.length}B`);
+                setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${mode.toUpperCase()}${mode === 'multi-bit' ? "" : ` (depth=${d})`}`]);
+                break outer;
+              }
             }
           }
 
@@ -208,11 +215,18 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           }
 
           setDetectedMode(detMode);
+          if (detMode !== 'multi-bit') setDetectedDepth(detDepth);
 
-          // Strip MODE: header if present
+          // Strip MODE: header if present (supports MODE:<algo>: and MODE:<algo>:depth=<n>:)
           if (payload.startsWith("MODE:")) {
-            const modeEnd = payload.indexOf(":", 5);
-            payload = payload.slice(modeEnd + 1);
+            // consume tokens until the next non-meta token (ENC|PLAIN|FILE|SHA256)
+            let rest = payload.slice(5);
+            while (rest.length && !/^(ENC:|PLAIN:|FILE:|SHA256:)/.test(rest)) {
+              const i = rest.indexOf(":");
+              if (i < 0) break;
+              rest = rest.slice(i + 1);
+            }
+            payload = rest;
           }
 
           if (payload.startsWith("ENC:")) {
@@ -387,6 +401,20 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!password) { toast.error("No key to copy"); return; }
+                navigator.clipboard.writeText(password);
+                toast.success("Key copied");
+              }}
+              variant="outline"
+              size="sm"
+              className="btn-decode font-mono text-xs"
+              title="Copy decryption key"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
             <Button onClick={handleDecode} className="btn-decode font-mono text-xs" disabled={!uploadedImage || isDecoding}>
               {isDecoding ? "[ DECODING... ]" : "[ DECODE ]"}
             </Button>
@@ -412,11 +440,17 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
       {detectedMode && modeInfo && (
         <div className="card-glass rounded-xl p-4 animate-fade-in">
           <Label className="text-xs text-muted-foreground block font-mono uppercase tracking-wider mb-3">// Detection Report</Label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="p-3 rounded-lg bg-background/50 border border-border/30">
               <p className="text-xs text-muted-foreground font-mono mb-1">Algorithm</p>
               <p className={`text-sm font-bold font-mono ${modeInfo.color}`}>
                 {modeInfo.icon} {modeInfo.label}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg bg-background/50 border border-border/30">
+              <p className="text-xs text-muted-foreground font-mono mb-1">LSB Depth</p>
+              <p className="text-sm font-bold font-mono text-foreground">
+                {detectedDepth ? `${detectedDepth}-bit` : "n/a"}
               </p>
             </div>
             <div className="p-3 rounded-lg bg-background/50 border border-border/30">

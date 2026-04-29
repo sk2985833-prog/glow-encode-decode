@@ -40,6 +40,7 @@ const Index = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [scanCount, setScanCount] = useState(0);
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
+  const [lastActivityAt, setLastActivityAt] = useState<number>(Date.now());
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const lastOpStartRef = useRef<number | null>(null);
 
@@ -56,6 +57,7 @@ const Index = () => {
       setLastScanMs(performance.now() - lastOpStartRef.current);
       lastOpStartRef.current = null;
     }
+    setLastActivityAt(Date.now());
     setLogs((prev) => [
       ...prev,
       { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
@@ -160,7 +162,7 @@ const Index = () => {
   return (
     <div className="min-h-screen relative flex flex-col">
       <CyberGrid />
-      <StatusBar opCount={opCount} activeOp={activeOpCode} />
+      <StatusBar opCount={opCount} activeOp={activeOpCode} lastActivityAt={lastActivityAt} />
 
       <div className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
         <OpsHeader sessionId={sessionId} onNav={(t) => setActiveTab(t)} />

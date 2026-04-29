@@ -1,33 +1,79 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useState, useEffect, useRef } from "react";
 
 interface StatusBarProps {
   opCount?: number;
   activeOp?: string;
+  lastActivityAt?: number; // ms epoch — bump when user/op activity happens
 }
 
-export default function StatusBar({ opCount = 0, activeOp = "IDLE" }: StatusBarProps) {
+/**
+ * Real browser-local telemetry — no fake values, no remote calls.
+ *  CPU  → event-loop drift sampling (a true measure of local CPU pressure).
+ *  MEM  → performance.memory (Chromium) usedJSHeapSize / jsHeapSizeLimit.
+ *  LIVE → tab is visible AND there has been activity in the last 5s.
+ */
+export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivityAt }: StatusBarProps) {
   const [time, setTime] = useState(new Date());
-  const [load, setLoad] = useState<{ cpu: number; mem: number; live: boolean }>({ cpu: 0, mem: 0, live: false });
+  const [cpu, setCpu] = useState(0);
+  const [mem, setMem] = useState<{ pct: number; supported: boolean }>({ pct: 0, supported: false });
+  const [live, setLive] = useState(false);
+  const driftBufRef = useRef<number[]>([]);
 
+  // Event-loop drift sampler (CPU pressure proxy). Schedule every 200ms; measure overshoot.
   useEffect(() => {
-    const t = setInterval(() => setTime(new Date()), 1000);
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("system-stats", { method: "GET" });
-        if (cancelled || error || !data) return;
-        setLoad({
-          cpu: Math.round(data.cpu?.percent ?? 0),
-          mem: Math.round(data.memory?.percent ?? 0),
-          live: true,
-        });
-      } catch { /* offline → keep last known */ }
+    let lastTick = performance.now();
+    let stop = false;
+    const tick = () => {
+      if (stop) return;
+      const now = performance.now();
+      const drift = Math.max(0, now - lastTick - 200);
+      lastTick = now;
+      const buf = driftBufRef.current;
+      buf.push(drift);
+      if (buf.length > 10) buf.shift();
+      // Map drift (0-200ms) to 0-100%. Anything over 200ms is pegged.
+      const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+      setCpu(Math.min(100, Math.round((avg / 200) * 100)));
+      setTimeout(tick, 200);
     };
-    poll();
-    const l = setInterval(poll, 1000);
-    return () => { cancelled = true; clearInterval(t); clearInterval(l); };
+    const id = setTimeout(tick, 200);
+    return () => { stop = true; clearTimeout(id); };
   }, []);
+
+  // Memory sampler (Chromium only). Updates every 1s.
+  useEffect(() => {
+    type MemPerf = Performance & { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } };
+    const sample = () => {
+      const m = (performance as MemPerf).memory;
+      if (m && m.jsHeapSizeLimit > 0) {
+        setMem({ pct: Math.round((m.usedJSHeapSize / m.jsHeapSizeLimit) * 100), supported: true });
+      } else {
+        setMem({ pct: 0, supported: false });
+      }
+    };
+    sample();
+    const id = setInterval(sample, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Wall clock
+  useEffect(() => {
+    const id = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // LIVE: visible tab + activity within last 5s
+  useEffect(() => {
+    const update = () => {
+      const visible = typeof document !== "undefined" ? document.visibilityState === "visible" : true;
+      const recent = lastActivityAt ? Date.now() - lastActivityAt < 5000 : false;
+      setLive(visible && (recent || activeOp !== "IDLE"));
+    };
+    update();
+    const id = setInterval(update, 1000);
+    document.addEventListener("visibilitychange", update);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", update); };
+  }, [lastActivityAt, activeOp]);
 
   const utc = time.toISOString().slice(11, 19);
   const local = time.toLocaleTimeString("en-US", { hour12: false });
@@ -46,20 +92,20 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE" }: StatusBarP
             <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--decode-accent))] animate-pulse" />
             SYS:OK
           </span>
-          <span className="flex items-center gap-1.5 border-l border-border/30 pl-4">
+          <span className="flex items-center gap-1.5 border-l border-border/30 pl-4" title="Event-loop drift sampling (real CPU pressure proxy)">
             <span className="text-muted-foreground/40">CPU</span>
-            <MetricBar pct={load.cpu} live={load.live} />
-            <span className="tabular-nums text-foreground/80 w-9 text-right">{load.live ? `${load.cpu.toString().padStart(2, "0")}%` : "--%"}</span>
+            <MetricBar pct={cpu} live />
+            <span className="tabular-nums text-foreground/80 w-9 text-right">{cpu.toString().padStart(2, "0")}%</span>
           </span>
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5" title={mem.supported ? "JS heap usedJSHeapSize / jsHeapSizeLimit" : "performance.memory unsupported in this browser"}>
             <span className="text-muted-foreground/40">MEM</span>
-            <MetricBar pct={load.mem} live={load.live} />
-            <span className="tabular-nums text-foreground/80 w-9 text-right">{load.live ? `${load.mem.toString().padStart(2, "0")}%` : "--%"}</span>
+            <MetricBar pct={mem.pct} live={mem.supported} />
+            <span className="tabular-nums text-foreground/80 w-9 text-right">{mem.supported ? `${mem.pct.toString().padStart(2, "0")}%` : "n/a"}</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="text-muted-foreground/40">SRC</span>
-            <span className={`tabular-nums ${load.live ? "text-[hsl(var(--decode-accent))]" : "text-muted-foreground/60"}`}>
-              {load.live ? "LIVE" : "PEND"}
+            <span className={`tabular-nums ${live ? "text-[hsl(var(--decode-accent))]" : "text-muted-foreground/60"}`}>
+              {live ? "LIVE" : "IDLE"}
             </span>
           </span>
           <span className="flex items-center gap-1.5 border-l border-border/30 pl-4">
