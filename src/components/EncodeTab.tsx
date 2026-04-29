@@ -302,7 +302,12 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
           }`}
         >
           <div className="text-muted-foreground text-sm font-mono">{'>'} Drag & drop image or click to browse</div>
-          <Button variant="outline" className="btn-encode text-xs" onClick={(e) => e.stopPropagation()}>
+          <Button
+            type="button"
+            variant="outline"
+            className="btn-encode text-xs"
+            onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+          >
             Browse Image
           </Button>
           <input ref={fileInputRef} type="file" accept="image/png,.png" onChange={handleFileSelect} className="hidden" />

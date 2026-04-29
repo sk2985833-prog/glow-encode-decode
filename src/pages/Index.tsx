@@ -32,6 +32,17 @@ const TAB_CODES: Record<TabValue, { code: string; label: string; icon: string }>
   learn:     { code: "OP-07", label: "DOCS",     icon: "🎓" },
 };
 
+const SOURCE_OPS: Record<string, string> = {
+  embed: "OP-01",
+  extract: "OP-02",
+  analyze: "OP-03",
+  visualize: "OP-04",
+  metadata: "OP-05",
+  attack: "OP-06",
+  docs: "OP-07",
+  wipe: "OP-99",
+};
+
 const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [activeTab, setActiveTab] = useState<TabValue>("encode");
@@ -41,6 +52,7 @@ const Index = () => {
   const [scanCount, setScanCount] = useState(0);
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const [lastActivityAt, setLastActivityAt] = useState<number>(Date.now());
+  const [runtimeOp, setRuntimeOp] = useState("IDLE");
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const lastOpStartRef = useRef<number | null>(null);
 
@@ -50,12 +62,19 @@ const Index = () => {
   }, []);
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
+    const sourceOp = SOURCE_OPS[source];
     if (level === "sys" && /initiated/i.test(message)) {
       lastOpStartRef.current = performance.now();
+      setRuntimeOp(sourceOp || message.match(/OP-\d+/)?.[0] || "ACTIVE");
     }
     if (level === "ok" && /complete/i.test(message) && lastOpStartRef.current != null) {
       setLastScanMs(performance.now() - lastOpStartRef.current);
       lastOpStartRef.current = null;
+      setRuntimeOp("IDLE");
+    } else if (level === "err") {
+      setRuntimeOp("IDLE");
+    } else if (sourceOp && ["info", "warn"].includes(level)) {
+      setRuntimeOp(sourceOp);
     }
     setLastActivityAt(Date.now());
     setLogs((prev) => [
@@ -157,7 +176,7 @@ const Index = () => {
   };
 
   const opCount = history.length;
-  const activeOpCode = TAB_CODES[activeTab].code;
+  const activeOpCode = runtimeOp;
 
   return (
     <div className="min-h-screen relative flex flex-col">
