@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound, Shuffle } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Shuffle, Copy } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import InlineError from "@/components/InlineError";
 import {
@@ -17,6 +17,9 @@ import {
   calculateCapacity,
   EncodingMode,
   sha256Hex,
+  LsbDepth,
+  DEFAULT_LSB_DEPTH,
+  lsbReliability,
 } from "@/lib/steganography";
 
 interface EncodeTabProps {
@@ -47,13 +50,21 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
   const [inputMode, setInputMode] = useState<InputMode>("text");
   const [secretFile, setSecretFile] = useState<File | null>(null);
   const [encodingMode, setEncodingMode] = useState<EncodingMode>("lsb");
+  const [lsbDepth, setLsbDepth] = useState<LsbDepth>(DEFAULT_LSB_DEPTH);
   const [embedKey, setEmbedKey] = useState("");
   const [validationError, setValidationError] = useState<{ code: string; title: string; reason: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const secretFileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const capacity = image ? calculateCapacity(image.width, image.height, encodingMode) : 0;
+  const capacity = image ? calculateCapacity(image.width, image.height, encodingMode, lsbDepth) : 0;
+  const supportsDepth = encodingMode !== 'multi-bit';
+  const reliability = lsbReliability(lsbDepth);
+  const reliabilityClass =
+    reliability.tone === "safe" ? "text-[hsl(var(--decode-accent))]" :
+    reliability.tone === "ok"   ? "text-[hsl(var(--encode-accent))]" :
+    reliability.tone === "warn" ? "text-yellow-400" :
+                                  "text-destructive";
 
   const loadImage = useCallback(
     (file: File) => {
@@ -179,7 +190,8 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       }
 
       // Store encoding mode in payload header
-      const modeHeader = `MODE:${encodingMode}:`;
+      const depthTag = supportsDepth ? `:depth=${lsbDepth}` : "";
+      const modeHeader = `MODE:${encodingMode}${depthTag}:`;
       payloadStr = modeHeader + payloadStr;
 
       const payloadBytes = stringToUint8Array(payloadStr);
@@ -222,10 +234,10 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
       if (keyNum !== undefined) onLog?.("info", "embed", `keyed permutation seed=${keyNum}`);
 
-      onLog?.("sys", "embed", `bit-write start · algo=${encodingMode}`);
+      onLog?.("sys", "embed", `bit-write start · algo=${encodingMode}${supportsDepth ? ` · depth=${lsbDepth}` : ""}`);
       await new Promise<void>((resolve) => {
         setTimeout(() => {
-          writeBitsToImageData(imgData, bits, (p) => setProgress(p), encodingMode, keyNum);
+          writeBitsToImageData(imgData, bits, (p) => setProgress(p), encodingMode, keyNum, supportsDepth ? lsbDepth : DEFAULT_LSB_DEPTH);
           ctx.putImageData(imgData, 0, 0);
           resolve();
         }, 60);
@@ -320,6 +332,41 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
         <p className="text-xs text-muted-foreground font-mono">
           {MODE_INFO[encodingMode].icon} {MODE_INFO[encodingMode].desc}
         </p>
+        {supportsDepth && (
+          <div className="space-y-2 pt-2 border-t border-border/30">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground font-mono uppercase tracking-wider">// LSB Depth (bits per pixel)</Label>
+              <span className={`text-xs font-mono font-semibold ${reliabilityClass}`}>{reliability.label}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {([1, 2, 3, 4] as LsbDepth[]).map((d) => (
+                <Button
+                  key={d}
+                  type="button"
+                  size="sm"
+                  variant={lsbDepth === d ? "default" : "outline"}
+                  onClick={() => setLsbDepth(d)}
+                  className={`font-mono text-xs h-8 ${lsbDepth === d ? "btn-encode" : ""}`}
+                >
+                  {d}-bit
+                </Button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+              <div className="p-2 rounded bg-background/50 border border-border/30">
+                <span className="text-muted-foreground/60 block">Capacity</span>
+                <span className="text-[hsl(var(--encode-accent))] font-semibold">{capacity.toLocaleString()} B</span>
+              </div>
+              <div className="p-2 rounded bg-background/50 border border-border/30">
+                <span className="text-muted-foreground/60 block">Reliability</span>
+                <span className={`font-semibold ${reliabilityClass}`}>{reliability.note}</span>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground/60 font-mono">
+              Default 1-bit is safe & imperceptible. Higher depth multiplies capacity but raises detectability.
+            </p>
+          </div>
+        )}
         {encodingMode === 'random-pixel' && (
           <div>
             <Label className="text-xs text-muted-foreground mb-1 block font-mono">Embedding Key</Label>
@@ -415,6 +462,20 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!password) { toast.error("No key to copy"); return; }
+                navigator.clipboard.writeText(password);
+                toast.success("Key copied");
+              }}
+              variant="outline"
+              size="sm"
+              className="btn-encode text-xs font-mono"
+              title="Copy encryption key"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
             <Button onClick={handleGenerate} variant="outline" className="btn-encode text-xs font-mono" size="sm">
               <Shuffle className="h-3 w-3 mr-1" /> Generate
             </Button>
