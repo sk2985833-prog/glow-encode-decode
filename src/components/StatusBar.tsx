@@ -8,14 +8,14 @@ interface StatusBarProps {
 
 /**
  * Real browser-local telemetry — no fake values, no remote calls.
- *  CPU  → event-loop drift sampling (a true measure of local CPU pressure).
- *  MEM  → performance.memory (Chromium) usedJSHeapSize / jsHeapSizeLimit.
+ *  CPU  → event-loop drift sampling (real UI-thread pressure; browsers do not expose OS CPU%).
+ *  MEM  → performance.memory (Chromium) usedJSHeapSize / jsHeapSizeLimit when available.
  *  LIVE → tab is visible AND there has been activity in the last 5s.
  */
 export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivityAt }: StatusBarProps) {
   const [time, setTime] = useState(new Date());
-  const [cpu, setCpu] = useState(0);
-  const [mem, setMem] = useState<{ pct: number; supported: boolean }>({ pct: 0, supported: false });
+  const [cpu, setCpu] = useState<{ pct: number; supported: boolean }>({ pct: 0, supported: true });
+  const [mem, setMem] = useState<{ pct: number; usedMb: number; limitMb: number | null; supported: boolean }>({ pct: 0, usedMb: 0, limitMb: null, supported: false });
   const [live, setLive] = useState(false);
   const driftBufRef = useRef<number[]>([]);
 
@@ -33,7 +33,7 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
       if (buf.length > 10) buf.shift();
       // Map drift (0-200ms) to 0-100%. Anything over 200ms is pegged.
       const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-      setCpu(Math.min(100, Math.round((avg / 200) * 100)));
+      setCpu({ pct: Math.min(100, (avg / 200) * 100), supported: true });
       setTimeout(tick, 200);
     };
     const id = setTimeout(tick, 200);
@@ -46,9 +46,11 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
     const sample = () => {
       const m = (performance as MemPerf).memory;
       if (m && m.jsHeapSizeLimit > 0) {
-        setMem({ pct: Math.round((m.usedJSHeapSize / m.jsHeapSizeLimit) * 100), supported: true });
+        const usedMb = m.usedJSHeapSize / 1024 / 1024;
+        const limitMb = m.jsHeapSizeLimit / 1024 / 1024;
+        setMem({ pct: Math.min(100, (usedMb / limitMb) * 100), usedMb, limitMb, supported: true });
       } else {
-        setMem({ pct: 0, supported: false });
+        setMem({ pct: 0, usedMb: 0, limitMb: null, supported: false });
       }
     };
     sample();
@@ -78,6 +80,8 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
   const utc = time.toISOString().slice(11, 19);
   const local = time.toLocaleTimeString("en-US", { hour12: false });
   const dateStr = time.toISOString().slice(0, 10);
+  const cpuLabel = formatPercent(cpu.pct);
+  const memLabel = mem.supported ? `${Math.max(1, Math.round(mem.usedMb))}MB` : "n/a";
 
   return (
     <div className="w-full border-b border-border/40 bg-card/60 backdrop-blur-md font-mono text-[10px] text-muted-foreground/70 select-none">
@@ -92,15 +96,15 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
             <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--decode-accent))] animate-pulse" />
             SYS:OK
           </span>
-          <span className="flex items-center gap-1.5 border-l border-border/30 pl-4" title="Event-loop drift sampling (real CPU pressure proxy)">
+          <span className="flex items-center gap-1.5 border-l border-border/30 pl-4" title="Real browser UI-thread load from event-loop drift; OS-level CPU is not exposed to web pages">
             <span className="text-muted-foreground/40">CPU</span>
-            <MetricBar pct={cpu} live />
-            <span className="tabular-nums text-foreground/80 w-9 text-right">{cpu.toString().padStart(2, "0")}%</span>
+            <MetricBar pct={cpu.pct} live={cpu.supported} />
+            <span className="tabular-nums text-foreground/80 w-10 text-right">{cpuLabel}</span>
           </span>
-          <span className="flex items-center gap-1.5" title={mem.supported ? "JS heap usedJSHeapSize / jsHeapSizeLimit" : "performance.memory unsupported in this browser"}>
+          <span className="flex items-center gap-1.5" title={mem.supported ? `Real JS heap: ${mem.usedMb.toFixed(1)}MB used${mem.limitMb ? ` / ${mem.limitMb.toFixed(0)}MB limit` : ""}` : "Live JS heap usage is not exposed by this browser"}>
             <span className="text-muted-foreground/40">MEM</span>
             <MetricBar pct={mem.pct} live={mem.supported} />
-            <span className="tabular-nums text-foreground/80 w-9 text-right">{mem.supported ? `${mem.pct.toString().padStart(2, "0")}%` : "n/a"}</span>
+            <span className="tabular-nums text-foreground/80 w-12 text-right">{memLabel}</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="text-muted-foreground/40">SRC</span>
@@ -142,4 +146,9 @@ function MetricBar({ pct, live }: { pct: number; live: boolean }) {
       <span className={`block h-full ${color} transition-all`} style={{ width: `${w}%` }} />
     </span>
   );
+}
+
+function formatPercent(value: number) {
+  if (value > 0 && value < 1) return "<1%";
+  return `${Math.round(value).toString().padStart(2, "0")}%`;
 }
