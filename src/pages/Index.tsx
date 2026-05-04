@@ -68,6 +68,16 @@ const Index = () => {
       setRuntimeOp(sourceOp || message.match(/OP-\d+/)?.[0] || "ACTIVE");
     }
     if (level === "ok" && /complete/i.test(message) && lastOpStartRef.current != null) {
+      // Only reset to IDLE on final OP-XX complete messages, not intermediate completions
+      if (!/^OP-\d+/i.test(message)) {
+        // Intermediate completion (e.g. "bit-write complete") — keep current op
+        setLastActivityAt(Date.now());
+        setLogs((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
+        ].slice(-80));
+        return;
+      }
       setLastScanMs(performance.now() - lastOpStartRef.current);
       lastOpStartRef.current = null;
       setRuntimeOp("IDLE");
