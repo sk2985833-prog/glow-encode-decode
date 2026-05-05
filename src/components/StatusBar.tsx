@@ -38,6 +38,8 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
   const [memHistory, setMemHistory] = useState<number[]>([]);
   const cpuHistRef = useRef<number[]>([]);
   const memHistRef = useRef<number[]>([]);
+  const [cpuSpike, setCpuSpike] = useState(false);
+  const [memSpike, setMemSpike] = useState(false);
 
   // Event-loop drift sampler (CPU pressure proxy). Schedule every 200ms; measure overshoot.
   useEffect(() => {
@@ -62,6 +64,12 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
         if (h.length > 30) h.shift();
         cpuHistRef.current = h;
         setCpuHistory([...h]);
+        // Spike detection: current > 2× rolling average of last 10 samples
+        if (h.length >= 5) {
+          const recent = h.slice(-10);
+          const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+          setCpuSpike(pct > avg * 2 && pct > 15);
+        }
       }
       setTimeout(tick, 200);
     };
@@ -84,6 +92,12 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
         if (h.length > 30) h.shift();
         memHistRef.current = h;
         setMemHistory([...h]);
+        // Spike detection
+        if (h.length >= 5) {
+          const recent = h.slice(-10);
+          const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+          setMemSpike(pct > avg * 1.5 && pct > 20);
+        }
       } else {
         setMem({ pct: 0, usedMb: 0, limitMb: null, supported: false });
       }
@@ -131,14 +145,14 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
             <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--decode-accent))] animate-pulse" />
             SYS:OK
           </span>
-          <span className="flex items-center gap-1.5 border-l border-border/30 pl-4" title="Real browser UI-thread load from event-loop drift; OS-level CPU is not exposed to web pages">
-            <span className="text-muted-foreground/40">CPU</span>
+          <span className="flex items-center gap-1.5 border-l border-border/30 pl-4" title={cpuSpike ? "⚡ CPU spike detected" : "Real browser UI-thread load from event-loop drift; OS-level CPU is not exposed to web pages"}>
+            <span className={`text-muted-foreground/40 ${cpuSpike ? "text-destructive animate-pulse" : ""}`}>CPU{cpuSpike ? "⚡" : ""}</span>
             <Sparkline data={cpuHistory} color="hsl(var(--decode-accent))" />
             <MetricBar pct={cpu.pct} live={cpu.supported} />
             <span className="tabular-nums text-foreground/80 w-10 text-right">{cpuLabel}</span>
           </span>
-          <span className="flex items-center gap-1.5" title={mem.supported ? `Real JS heap: ${mem.usedMb.toFixed(1)}MB used${mem.limitMb ? ` / ${mem.limitMb.toFixed(0)}MB limit` : ""}` : "Live JS heap usage is not exposed by this browser"}>
-            <span className="text-muted-foreground/40">MEM</span>
+          <span className="flex items-center gap-1.5" title={memSpike ? "⚡ Memory spike detected" : mem.supported ? `Real JS heap: ${mem.usedMb.toFixed(1)}MB used${mem.limitMb ? ` / ${mem.limitMb.toFixed(0)}MB limit` : ""}` : "Live JS heap usage is not exposed by this browser"}>
+            <span className={`text-muted-foreground/40 ${memSpike ? "text-yellow-400 animate-pulse" : ""}`}>MEM{memSpike ? "⚡" : ""}</span>
             <Sparkline data={memHistory} color="hsl(var(--encode-accent))" />
             <MetricBar pct={mem.pct} live={mem.supported} />
             <span className="tabular-nums text-foreground/80 w-12 text-right">{memLabel}</span>
