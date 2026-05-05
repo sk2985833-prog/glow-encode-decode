@@ -17,8 +17,9 @@ import SystemLog, { LogEntry } from "@/components/SystemLog";
 import AirgapIndicator from "@/components/AirgapIndicator";
 import EnginePanel from "@/components/EnginePanel";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
+import { sha256Report } from "@/lib/forensics";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
 
@@ -55,6 +56,14 @@ const Index = () => {
   const [runtimeOp, setRuntimeOp] = useState("IDLE");
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const lastOpStartRef = useRef<number | null>(null);
+  const requestIdCounter = useRef(0);
+
+  /** Generate a unique request ID for each operation. */
+  const nextRequestId = useCallback(() => {
+    requestIdCounter.current++;
+    const seq = requestIdCounter.current.toString().padStart(4, "0");
+    return `${sessionId}-${seq}`;
+  }, [sessionId]);
 
   const sessionId = useMemo(() => {
     const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
@@ -63,6 +72,7 @@ const Index = () => {
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
     const sourceOp = SOURCE_OPS[source];
+    const reqId = sourceOp ? nextRequestId() : undefined;
     if (level === "sys" && /initiated/i.test(message)) {
       lastOpStartRef.current = performance.now();
       setRuntimeOp(sourceOp || message.match(/OP-\d+/)?.[0] || "ACTIVE");
@@ -91,7 +101,36 @@ const Index = () => {
       ...prev,
       { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
     ].slice(-80));
-  }, []);
+  }, [nextRequestId]);
+
+  /** Export full session report with metadata and SHA-256 integrity hash. */
+  const handleExportReport = useCallback(async () => {
+    pushLog("sys", "wipe", "generating session report…");
+    const report = {
+      meta: {
+        requestId: nextRequestId(),
+        sessionId,
+        timestamp: new Date().toISOString(),
+        engineVersion: "2.3.1-enterprise",
+      },
+      history: history.map((h) => ({ type: h.type, summary: h.summary, timestamp: new Date(h.timestamp).toISOString() })),
+      logs: logs.slice(-50).map((l) => ({ level: l.level, source: l.source, message: l.message, timestamp: new Date(l.timestamp).toISOString() })),
+      stats: { opCount: history.length, lastScanMs },
+      integrity: "",
+    };
+    const body = JSON.stringify(report, null, 2);
+    report.integrity = await sha256Report(body);
+    const final = JSON.stringify(report, null, 2);
+    const blob = new Blob([final], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `steglab-report-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    pushLog("ok", "wipe", "report exported with SHA-256 integrity hash");
+    toast.success("Report exported");
+  }, [sessionId, history, logs, lastScanMs, nextRequestId, pushLog]);
 
   // Boot sequence
   useEffect(() => {
@@ -262,6 +301,14 @@ const Index = () => {
             >
               <Trash2 className="h-3 w-3" />
               OP-99 / WIPE WORKSPACE
+            </Button>
+            <Button
+              onClick={handleExportReport}
+              variant="outline"
+              className="w-full font-mono text-[11px] gap-2 h-9 border-[hsl(var(--encode-accent))]/40 text-[hsl(var(--encode-accent))] hover:bg-[hsl(var(--encode-accent))]/10"
+            >
+              <Download className="h-3 w-3" />
+              EXPORT REPORT
             </Button>
             <SystemLog entries={logs} onClear={() => setLogs([])} />
             <HistoryPanel entries={history} onClearHistory={() => setHistory([])} />
