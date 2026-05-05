@@ -58,17 +58,17 @@ const Index = () => {
   const lastOpStartRef = useRef<number | null>(null);
   const requestIdCounter = useRef(0);
 
+  const sessionId = useMemo(() => {
+    const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
+    return `SL-${new Date().getFullYear()}-${rand}`;
+  }, []);
+
   /** Generate a unique request ID for each operation. */
   const nextRequestId = useCallback(() => {
     requestIdCounter.current++;
     const seq = requestIdCounter.current.toString().padStart(4, "0");
     return `${sessionId}-${seq}`;
   }, [sessionId]);
-
-  const sessionId = useMemo(() => {
-    const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
-    return `SL-${new Date().getFullYear()}-${rand}`;
-  }, []);
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
     const sourceOp = SOURCE_OPS[source];
