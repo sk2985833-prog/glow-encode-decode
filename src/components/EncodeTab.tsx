@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Eye, EyeOff, KeyRound, Shuffle, Copy } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import InlineError from "@/components/InlineError";
+import InputForensics from "@/components/InputForensics";
 import {
   stringToUint8Array,
   uint8ToBitArray,
@@ -421,6 +422,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
               <span>{message.length.toLocaleString()} / {capacity.toLocaleString()} chars</span>
               <span>LSB blue channel</span>
             </div>
+            <InputForensics input={message} />
           </div>
         ) : (
           <div>
