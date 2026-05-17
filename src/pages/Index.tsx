@@ -54,9 +54,11 @@ const Index = () => {
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const [lastActivityAt, setLastActivityAt] = useState<number>(Date.now());
   const [runtimeOp, setRuntimeOp] = useState("IDLE");
+  const [runtimeProgress, setRuntimeProgress] = useState(0);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const lastOpStartRef = useRef<number | null>(null);
   const opClearTimerRef = useRef<number | null>(null);
+  const progressIntervalRef = useRef<number | null>(null);
   const requestIdCounter = useRef(0);
 
   const sessionId = useMemo(() => {
@@ -78,20 +80,39 @@ const Index = () => {
       if (opClearTimerRef.current) window.clearTimeout(opClearTimerRef.current);
       const elapsed = lastOpStartRef.current ? performance.now() - lastOpStartRef.current : 9999;
       const remaining = Math.max(0, 1200 - elapsed);
+      // Snap progress to 100% immediately so completion is perceptible
+      setRuntimeProgress(100);
+      if (progressIntervalRef.current) {
+        window.clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
       opClearTimerRef.current = window.setTimeout(() => {
         setRuntimeOp("IDLE");
+        setRuntimeProgress(0);
         opClearTimerRef.current = null;
       }, remaining);
     };
     if (level === "sys" && /initiated/i.test(message)) {
       if (opClearTimerRef.current) { window.clearTimeout(opClearTimerRef.current); opClearTimerRef.current = null; }
+      if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
       lastOpStartRef.current = performance.now();
       setRuntimeOp(sourceOp || message.match(/OP-\d+/)?.[0] || "ACTIVE");
+      // Ramp progress logarithmically toward 90% while the op runs.
+      // Each intermediate "info" log nudges it forward; the interval keeps it alive.
+      setRuntimeProgress(5);
+      progressIntervalRef.current = window.setInterval(() => {
+        setRuntimeProgress((p) => (p >= 90 ? 90 : p + Math.max(0.6, (90 - p) * 0.08)));
+      }, 180);
+    }
+    // Intermediate sub-step logs nudge progress forward so users perceive activity
+    if (level === "info" && sourceOp && lastOpStartRef.current != null) {
+      setRuntimeProgress((p) => Math.min(88, p + 6));
     }
     if (level === "ok" && /complete/i.test(message) && lastOpStartRef.current != null) {
       // Only reset to IDLE on final OP-XX complete messages, not intermediate completions
       if (!/^OP-\d+/i.test(message)) {
         // Intermediate completion (e.g. "bit-write complete") — keep current op
+        setRuntimeProgress((p) => Math.min(92, p + 8));
         setLastActivityAt(Date.now());
         setLogs((prev) => [
           ...prev,
@@ -240,7 +261,12 @@ const Index = () => {
   return (
     <div className="min-h-screen relative flex flex-col">
       <CyberGrid />
-      <StatusBar opCount={opCount} activeOp={activeOpCode} lastActivityAt={lastActivityAt} />
+      <StatusBar
+        opCount={opCount}
+        activeOp={activeOpCode}
+        lastActivityAt={lastActivityAt}
+        activeProgress={runtimeOp === "IDLE" ? undefined : runtimeProgress}
+      />
 
       <div className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
         <OpsHeader sessionId={sessionId} onNav={(t) => setActiveTab(t)} />
