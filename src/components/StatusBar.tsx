@@ -64,11 +64,16 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
         if (h.length > 30) h.shift();
         cpuHistRef.current = h;
         setCpuHistory([...h]);
-        // Spike detection: current > 2× rolling average of last 10 samples
-        if (h.length >= 5) {
-          const recent = h.slice(-10);
-          const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-          setCpuSpike(pct > avg * 2 && pct > 15);
+        // Spike detection: require high absolute load AND large delta over rolling baseline.
+        // Idle UI threads naturally jitter 0–10%; only flag clear sustained load.
+        if (h.length >= 8) {
+          const baseline = h.slice(-10, -1); // exclude current sample
+          const avg = baseline.reduce((a, b) => a + b, 0) / baseline.length;
+          setCpuSpike((prev) => {
+            if (pct > 55 && pct > avg + 25) return true;        // enter spike
+            if (prev && pct < Math.max(avg + 10, 30)) return false; // exit hysteresis
+            return prev;
+          });
         }
       }
       setTimeout(tick, 200);
@@ -92,11 +97,15 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
         if (h.length > 30) h.shift();
         memHistRef.current = h;
         setMemHistory([...h]);
-        // Spike detection
-        if (h.length >= 5) {
-          const recent = h.slice(-10);
-          const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-          setMemSpike(pct > avg * 1.5 && pct > 20);
+        // Memory spike: require meaningful absolute use AND sharp growth.
+        if (h.length >= 8) {
+          const baseline = h.slice(-10, -1);
+          const avg = baseline.reduce((a, b) => a + b, 0) / baseline.length;
+          setMemSpike((prev) => {
+            if (pct > 60 && pct > avg + 15) return true;
+            if (prev && pct < Math.max(avg + 5, 40)) return false;
+            return prev;
+          });
         }
       } else {
         setMem({ pct: 0, usedMb: 0, limitMb: null, supported: false });

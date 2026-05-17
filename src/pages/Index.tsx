@@ -56,6 +56,7 @@ const Index = () => {
   const [runtimeOp, setRuntimeOp] = useState("IDLE");
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const lastOpStartRef = useRef<number | null>(null);
+  const opClearTimerRef = useRef<number | null>(null);
   const requestIdCounter = useRef(0);
 
   const sessionId = useMemo(() => {
@@ -73,7 +74,17 @@ const Index = () => {
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
     const sourceOp = SOURCE_OPS[source];
     const reqId = sourceOp ? nextRequestId() : undefined;
+    const scheduleIdle = () => {
+      if (opClearTimerRef.current) window.clearTimeout(opClearTimerRef.current);
+      const elapsed = lastOpStartRef.current ? performance.now() - lastOpStartRef.current : 9999;
+      const remaining = Math.max(0, 1200 - elapsed);
+      opClearTimerRef.current = window.setTimeout(() => {
+        setRuntimeOp("IDLE");
+        opClearTimerRef.current = null;
+      }, remaining);
+    };
     if (level === "sys" && /initiated/i.test(message)) {
+      if (opClearTimerRef.current) { window.clearTimeout(opClearTimerRef.current); opClearTimerRef.current = null; }
       lastOpStartRef.current = performance.now();
       setRuntimeOp(sourceOp || message.match(/OP-\d+/)?.[0] || "ACTIVE");
     }
@@ -89,10 +100,9 @@ const Index = () => {
         return;
       }
       setLastScanMs(performance.now() - lastOpStartRef.current);
-      lastOpStartRef.current = null;
-      setRuntimeOp("IDLE");
+      scheduleIdle();
     } else if (level === "err") {
-      setRuntimeOp("IDLE");
+      scheduleIdle();
     } else if (sourceOp && ["info", "warn"].includes(level)) {
       setRuntimeOp(sourceOp);
     }
