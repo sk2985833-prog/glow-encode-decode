@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { sha256Report } from "@/lib/forensics";
+import { ops, OpModule, OpRecord } from "@/lib/ops";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
 
@@ -56,14 +57,62 @@ const Index = () => {
   const [runtimeOp, setRuntimeOp] = useState("IDLE");
   const [runtimeProgress, setRuntimeProgress] = useState(0);
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
-  const lastOpStartRef = useRef<number | null>(null);
   const opClearTimerRef = useRef<number | null>(null);
   const progressIntervalRef = useRef<number | null>(null);
   const requestIdCounter = useRef(0);
+  const runningOpsRef = useRef<Set<string>>(new Set());
+  // Maps a log "source" (e.g. "embed") to its currently-open OpRecord so that
+  // subsequent info/ok/err pushLog calls under the same source map back to it.
+  const pendingOpsRef = useRef<Map<string, OpRecord>>(new Map());
 
   const sessionId = useMemo(() => {
     const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
     return `SL-${new Date().getFullYear()}-${rand}`;
+  }, []);
+
+  // Initialise the global orchestrator once per session.
+  useEffect(() => { ops.init(sessionId); }, [sessionId]);
+
+  // Drive the ACTIVE op indicator from real orchestrator events — no string parsing.
+  useEffect(() => {
+    const unsub = ops.subscribe((evt) => {
+      const running = runningOpsRef.current;
+      if (evt.kind === "begin") {
+        running.add(evt.op.uuid);
+        if (opClearTimerRef.current) { window.clearTimeout(opClearTimerRef.current); opClearTimerRef.current = null; }
+        if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
+        setRuntimeOp(evt.op.shortId);
+        setRuntimeProgress(5);
+        // Logarithmic ramp toward 90% while at least one op is in-flight.
+        progressIntervalRef.current = window.setInterval(() => {
+          setRuntimeProgress((p) => (p >= 90 ? 90 : p + Math.max(0.6, (90 - p) * 0.08)));
+        }, 180);
+      } else if (evt.kind === "trace") {
+        // Real processing stage — nudge progress so the bar reflects pipeline movement.
+        setRuntimeProgress((p) => Math.min(88, p + 4));
+      } else if (evt.kind === "end") {
+        running.delete(evt.op.uuid);
+        if (evt.op.duration != null) setLastScanMs(evt.op.duration);
+        // If other ops still running, keep going.
+        if (running.size > 0) return;
+        setRuntimeProgress(100);
+        if (progressIntervalRef.current) {
+          window.clearInterval(progressIntervalRef.current);
+          progressIntervalRef.current = null;
+        }
+        // 1.2s minimum dwell so users can perceive the 100% completion state.
+        const elapsedSinceStart = evt.op.duration ?? 0;
+        const dwell = Math.max(0, 1200 - elapsedSinceStart);
+        if (opClearTimerRef.current) window.clearTimeout(opClearTimerRef.current);
+        opClearTimerRef.current = window.setTimeout(() => {
+          setRuntimeOp("IDLE");
+          setRuntimeProgress(0);
+          opClearTimerRef.current = null;
+        }, dwell);
+      }
+      setLastActivityAt(Date.now());
+    });
+    return () => { unsub(); };
   }, []);
 
   /** Generate a unique request ID for each operation. */
@@ -74,58 +123,28 @@ const Index = () => {
   }, [sessionId]);
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
+    // Pure log append. ACTIVE-op state is driven by ops.subscribe — not by string parsing.
+    // Tabs can still call ops.begin/end directly for first-class tracking; legacy
+    // string-driven flow is preserved here for back-compat with existing pushLog calls.
     const sourceOp = SOURCE_OPS[source];
-    const reqId = sourceOp ? nextRequestId() : undefined;
-    const scheduleIdle = () => {
-      if (opClearTimerRef.current) window.clearTimeout(opClearTimerRef.current);
-      const elapsed = lastOpStartRef.current ? performance.now() - lastOpStartRef.current : 9999;
-      const remaining = Math.max(0, 1200 - elapsed);
-      // Snap progress to 100% immediately so completion is perceptible
-      setRuntimeProgress(100);
-      if (progressIntervalRef.current) {
-        window.clearInterval(progressIntervalRef.current);
-        progressIntervalRef.current = null;
-      }
-      opClearTimerRef.current = window.setTimeout(() => {
-        setRuntimeOp("IDLE");
-        setRuntimeProgress(0);
-        opClearTimerRef.current = null;
-      }, remaining);
-    };
-    if (level === "sys" && /initiated/i.test(message)) {
-      if (opClearTimerRef.current) { window.clearTimeout(opClearTimerRef.current); opClearTimerRef.current = null; }
-      if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
-      lastOpStartRef.current = performance.now();
-      setRuntimeOp(sourceOp || message.match(/OP-\d+/)?.[0] || "ACTIVE");
-      // Ramp progress logarithmically toward 90% while the op runs.
-      // Each intermediate "info" log nudges it forward; the interval keeps it alive.
-      setRuntimeProgress(5);
-      progressIntervalRef.current = window.setInterval(() => {
-        setRuntimeProgress((p) => (p >= 90 ? 90 : p + Math.max(0.6, (90 - p) * 0.08)));
-      }, 180);
-    }
-    // Intermediate sub-step logs nudge progress forward so users perceive activity
-    if (level === "info" && sourceOp && lastOpStartRef.current != null) {
-      setRuntimeProgress((p) => Math.min(88, p + 6));
-    }
-    if (level === "ok" && /complete/i.test(message) && lastOpStartRef.current != null) {
-      // Only reset to IDLE on final OP-XX complete messages, not intermediate completions
-      if (!/^OP-\d+/i.test(message)) {
-        // Intermediate completion (e.g. "bit-write complete") — keep current op
-        setRuntimeProgress((p) => Math.min(92, p + 8));
-        setLastActivityAt(Date.now());
-        setLogs((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message },
-        ].slice(-80));
-        return;
-      }
-      setLastScanMs(performance.now() - lastOpStartRef.current);
-      scheduleIdle();
-    } else if (level === "err") {
-      scheduleIdle();
-    } else if (sourceOp && ["info", "warn"].includes(level)) {
-      setRuntimeOp(sourceOp);
+    if (level === "sys" && sourceOp && /initiated/i.test(message)) {
+      // Open a tracked op so the orchestrator owns the lifecycle.
+      const moduleMap: Record<string, OpModule> = {
+        embed: "STEG", extract: "STEG", analyze: "ANALYSIS",
+        attack: "ANALYSIS", visualize: "ANALYSIS", metadata: "ANALYSIS",
+        wipe: "WIPE", docs: "SYSTEM",
+      };
+      const op = ops.begin(moduleMap[source] ?? "SYSTEM", message);
+      pendingOpsRef.current.set(source, op);
+    } else if (sourceOp && level === "info") {
+      const current = pendingOpsRef.current.get(source);
+      if (current) ops.trace(current.uuid, message);
+    } else if (level === "ok" && sourceOp && /OP-\d+\s+complete/i.test(message)) {
+      const current = pendingOpsRef.current.get(source);
+      if (current) { ops.end(current.uuid, "ok"); pendingOpsRef.current.delete(source); }
+    } else if (level === "err" && sourceOp) {
+      const current = pendingOpsRef.current.get(source);
+      if (current) { ops.end(current.uuid, "error", message); pendingOpsRef.current.delete(source); }
     }
     setLastActivityAt(Date.now());
     setLogs((prev) => [
@@ -137,13 +156,28 @@ const Index = () => {
   /** Export full session report with metadata and SHA-256 integrity hash. */
   const handleExportReport = useCallback(async () => {
     pushLog("sys", "wipe", "generating session report…");
+    const opList = ops.list();
     const report = {
       meta: {
         requestId: nextRequestId(),
         sessionId,
         timestamp: new Date().toISOString(),
         engineVersion: "2.3.1-enterprise",
+        opCount: opList.length,
       },
+      operations: opList.map((o) => ({
+        requestId: o.requestId,
+        rootRequestId: o.rootRequestId,
+        shortId: o.shortId,
+        module: o.module,
+        label: o.label,
+        status: o.status,
+        startedAt: new Date(o.startedAt).toISOString(),
+        endedAt: o.endedAt ? new Date(o.endedAt).toISOString() : null,
+        durationMs: o.duration ?? null,
+        trace: o.trace.map((t) => ({ stage: t.stage, at: Math.round(t.at), detail: t.detail })),
+        error: o.error,
+      })),
       history: history.map((h) => ({ type: h.type, summary: h.summary, timestamp: new Date(h.timestamp).toISOString() })),
       logs: logs.slice(-50).map((l) => ({ level: l.level, source: l.source, message: l.message, timestamp: new Date(l.timestamp).toISOString() })),
       stats: { opCount: history.length, lastScanMs },
