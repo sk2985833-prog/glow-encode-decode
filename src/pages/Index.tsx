@@ -61,6 +61,9 @@ const Index = () => {
   const progressIntervalRef = useRef<number | null>(null);
   const requestIdCounter = useRef(0);
   const runningOpsRef = useRef<Set<string>>(new Set());
+  // Maps a log "source" (e.g. "embed") to its currently-open OpRecord so that
+  // subsequent info/ok/err pushLog calls under the same source map back to it.
+  const pendingOpsRef = useRef<Map<string, OpRecord>>(new Map());
 
   const sessionId = useMemo(() => {
     const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
