@@ -77,6 +77,15 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
   const [thresholds, setThresholds] = useState<Thresholds>(loadThresholds);
   const [realism, setRealism] = useState(false);
   const probeRef = useRef<ReturnType<typeof startCpuProbe> | null>(null);
+  // Mirror reactive values into refs so the long-lived sampler intervals never
+  // need to be torn down and recreated. Recreating intervals on every spike
+  // toggle was the source of the "graph too active / resets" instability.
+  const thresholdsRef = useRef(thresholds);
+  const cpuSpikeRef = useRef(false);
+  const memSpikeRef = useRef(false);
+  useEffect(() => { thresholdsRef.current = thresholds; }, [thresholds]);
+  useEffect(() => { cpuSpikeRef.current = cpuSpike; }, [cpuSpike]);
+  useEffect(() => { memSpikeRef.current = memSpike; }, [memSpike]);
 
   // Persist thresholds
   useEffect(() => {
@@ -97,9 +106,10 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
   // Main-thread drift sampler. Combined with worker drift for a more accurate signal.
   useEffect(() => {
     let lastTick = performance.now();
-    let stop = false;
-    const tick = () => {
-      if (stop) return;
+    let tickCount = 0;
+    // Fixed 200ms cadence via setInterval (not chained setTimeout) — guarantees
+    // exactly one sampler per mount even under React strict-mode double-invoke.
+    const id = window.setInterval(() => {
       const now = performance.now();
       const drift = Math.max(0, now - lastTick - 200);
       lastTick = now;
@@ -117,33 +127,36 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
       const next = Math.abs(raw - prev) < 1.5 ? prev : prev + (raw - prev) * 0.55;
       prevCpuRef.current = next;
       setCpu({ pct: next, supported: true });
-      // Accumulate history every ~1s (every 5th tick)
-      if (buf.length % 5 === 0) {
+      tickCount++;
+      // Commit history exactly every 1s (every 5th 200ms tick) regardless of
+      // buffer state, so the rolling 30-sample window is deterministic.
+      if (tickCount % 5 === 0) {
         const h = cpuHistRef.current;
         h.push(next);
         if (h.length > 30) h.shift();
-        cpuHistRef.current = h;
         setCpuHistory([...h]);
-        // Dwell-time spike: enter only if sustained > dwellMs above cpuEnter
+        // Dwell-time spike: enter only if sustained > dwellMs above cpuEnter.
+        // Read thresholds + spike via refs so this interval never needs to be
+        // recreated when the user adjusts the popover sliders.
+        const t = thresholdsRef.current;
         const now2 = performance.now();
-        if (next >= thresholds.cpuEnter) {
+        if (next >= t.cpuEnter) {
           if (cpuSpikeSinceRef.current == null) cpuSpikeSinceRef.current = now2;
-          if (!cpuSpike && now2 - (cpuSpikeSinceRef.current ?? now2) >= thresholds.dwellMs) {
+          if (!cpuSpikeRef.current && now2 - (cpuSpikeSinceRef.current ?? now2) >= t.dwellMs) {
             setCpuSpike(true);
           }
-        } else if (next <= thresholds.cpuExit) {
+        } else if (next <= t.cpuExit) {
           cpuSpikeSinceRef.current = null;
-          if (cpuSpike) setCpuSpike(false);
+          if (cpuSpikeRef.current) setCpuSpike(false);
         }
       }
-      setTimeout(tick, 200);
-    };
-    const id = setTimeout(tick, 200);
-    return () => { stop = true; clearTimeout(id); };
-  }, [thresholds, cpuSpike]);
+    }, 200);
+    return () => { window.clearInterval(id); };
+  }, []);
 
   // Memory sampler (Chromium only). Updates every 1s, smoothed with an EMA so it
   // drifts slowly rather than oscillating — matches how real RSS behaves.
+  // Long-lived: never re-created. Threshold/spike state is read via refs.
   useEffect(() => {
     type MemPerf = Performance & { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } };
     const sample = () => {
@@ -160,17 +173,17 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
         const h = memHistRef.current;
         h.push(ema);
         if (h.length > 30) h.shift();
-        memHistRef.current = h;
         setMemHistory([...h]);
+        const t = thresholdsRef.current;
         const now2 = performance.now();
-        if (ema >= thresholds.memEnter) {
+        if (ema >= t.memEnter) {
           if (memSpikeSinceRef.current == null) memSpikeSinceRef.current = now2;
-          if (!memSpike && now2 - (memSpikeSinceRef.current ?? now2) >= thresholds.dwellMs) {
+          if (!memSpikeRef.current && now2 - (memSpikeSinceRef.current ?? now2) >= t.dwellMs) {
             setMemSpike(true);
           }
-        } else if (ema <= thresholds.memExit) {
+        } else if (ema <= t.memExit) {
           memSpikeSinceRef.current = null;
-          if (memSpike) setMemSpike(false);
+          if (memSpikeRef.current) setMemSpike(false);
         }
       } else {
         setMem({ pct: 0, usedMb: 0, limitMb: null, supported: false });
@@ -179,7 +192,7 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
     sample();
     const id = setInterval(sample, 1000);
     return () => clearInterval(id);
-  }, [thresholds, memSpike]);
+  }, []);
 
   // Wall clock
   useEffect(() => {
