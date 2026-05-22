@@ -1,0 +1,9 @@
+# Steganography Online
+
+> Browser-based steganography lab to hide and extract secret messages in images using LSB encoding with optional AES-256-GCM encryption. All processing is client-side.
+
+Steganography Online (a.k.a. StegLab) is a research and education tool by Lithickkumar. It supports four embedding modes (LSB, multi-bit, random-pixel, edge-based), AES-256-GCM encryption with PBKDF2-SHA256 key derivation, SHA-256 integrity verification, steganalysis (entropy, χ², LSB randomness), pixel visualization, EXIF metadata extraction, and red-team attack simulation (compression, resize, noise).
+
+## Pages
+
+- [Home](/): Encode, decode, analyze, visualize, inspect metadata, and red-team test steganographic payloads.

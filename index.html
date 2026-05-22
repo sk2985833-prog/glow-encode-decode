@@ -24,6 +24,49 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <meta property="og:image" content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/33c74aa7-63cc-460d-8226-3e10c30deda2/id-preview-c701e7ac--c2755307-9b35-478e-8556-6846d4321752.lovable.app-1776840344509.png">
   <meta name="twitter:image" content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/33c74aa7-63cc-460d-8226-3e10c30deda2/id-preview-c701e7ac--c2755307-9b35-478e-8556-6846d4321752.lovable.app-1776840344509.png">
+  <link rel="canonical" href="https://lithick.lovable.app/" />
+  <meta property="og:url" content="https://lithick.lovable.app/" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Steganography Online",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Web",
+    "description": "Hide secret messages in images using LSB steganography. Encode and decode messages with AES-256-GCM encryption, all in your browser.",
+    "url": "https://lithick.lovable.app/",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "author": { "@type": "Person", "name": "Lithickkumar" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is LSB steganography?",
+        "acceptedAnswer": { "@type": "Answer", "text": "LSB (Least Significant Bit) steganography hides data by replacing the lowest bit of each pixel's color channel with a bit of the secret message. The visual change is imperceptible to the human eye." }
+      },
+      {
+        "@type": "Question",
+        "name": "Is the message encrypted?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. When you supply a password, the message is encrypted with AES-256-GCM (PBKDF2-SHA256, 250,000 iterations, random salt and IV) before being embedded. A SHA-256 integrity tag is also added to detect tampering." }
+      },
+      {
+        "@type": "Question",
+        "name": "Does my image leave the browser?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. All encoding, decoding, and analysis happens entirely client-side using the Web Crypto API. Images are never uploaded to a server." }
+      },
+      {
+        "@type": "Question",
+        "name": "Which image formats are supported?",
+        "acceptedAnswer": { "@type": "Answer", "text": "PNG cover images only. JPEG re-compresses pixel data and would destroy the embedded payload. Maximum file size is 500MB and 8192px on either dimension." }
+      }
+    ]
+  }
+  </script>
 </head>
 
   <body>

@@ -302,7 +302,7 @@ const Index = () => {
         activeProgress={runtimeOp === "IDLE" ? undefined : runtimeProgress}
       />
 
-      <div className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
+      <main className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
         <OpsHeader sessionId={sessionId} onNav={(t) => setActiveTab(t)} />
 
         {/* Main Content */}
@@ -393,7 +393,8 @@ const Index = () => {
         )}
 
         {/* Footer */}
-        <footer className="mt-8 border-t border-border/30 pt-4 grid sm:grid-cols-3 gap-2 text-[10px] font-mono text-muted-foreground/60">
+      </main>
+      <footer className="max-w-7xl mx-auto px-4 mt-8 border-t border-border/30 pt-4 pb-6 grid sm:grid-cols-3 gap-2 text-[10px] font-mono text-muted-foreground/60 relative z-10 w-full">
           <div>
             <span className="text-muted-foreground/40">// build</span><br />
             steglab/2.1.0 · enterprise · {new Date().getFullYear()}.{(new Date().getMonth() + 1).toString().padStart(2, "0")}
@@ -407,7 +408,6 @@ const Index = () => {
             <span className="text-[hsl(var(--encode-accent))]">LITHICKKUMAR</span> · research &amp; education
           </div>
         </footer>
-      </div>
     </div>
   );
 };
