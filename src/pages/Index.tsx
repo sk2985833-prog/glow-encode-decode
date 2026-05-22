@@ -302,7 +302,7 @@ const Index = () => {
         activeProgress={runtimeOp === "IDLE" ? undefined : runtimeProgress}
       />
 
-      <div className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
+      <main className="max-w-7xl mx-auto px-4 py-4 relative z-10 flex-1 w-full">
         <OpsHeader sessionId={sessionId} onNav={(t) => setActiveTab(t)} />
 
         {/* Main Content */}
