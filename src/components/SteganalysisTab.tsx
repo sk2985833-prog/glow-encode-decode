@@ -1,15 +1,10 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import {
-  calculateEntropy,
-  calculateLSBRandomness,
-  getHistogram,
-  detectChiSquare,
-} from "@/lib/steganography";
 import TerminalOutput from "./TerminalOutput";
+import { steganalysisOffThread } from "@/lib/workerQueue";
 
 interface AnalysisResult {
   entropy: { r: number; g: number; b: number };
@@ -28,6 +23,10 @@ export default function SteganalysisTab() {
   const histRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const seqRef = useRef(0);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const loadImage = useCallback((file: File) => {
     setImage(file);
@@ -46,6 +45,11 @@ export default function SteganalysisTab() {
 
   const analyze = async () => {
     if (!image) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    const seq = ++seqRef.current;
+    abortRef.current = controller;
+    const isStale = () => controller.signal.aborted || seq !== seqRef.current;
     setAnalyzing(true);
     setTerminalLines([
       "$ steganalysis --deep-scan",
@@ -63,52 +67,34 @@ export default function SteganalysisTab() {
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0);
         const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imgData.data;
+        const data = imgData.data.slice();
 
         setTerminalLines((prev) => [...prev, `Resolution: ${img.width}×${img.height}`, "Computing entropy..."]);
 
-        const entropyR = calculateEntropy(data, 0);
-        const entropyG = calculateEntropy(data, 1);
-        const entropyB = calculateEntropy(data, 2);
+        try {
+          const scan = await steganalysisOffThread({ width: canvas.width, height: canvas.height, data, signal: controller.signal });
+          if (isStale()) return;
+          const entropyR = scan.entropy.r;
+          const entropyG = scan.entropy.g;
+          const entropyB = scan.entropy.b;
 
         setTerminalLines((prev) => [...prev, `Entropy R:${entropyR.toFixed(4)} G:${entropyG.toFixed(4)} B:${entropyB.toFixed(4)}`, "Analyzing LSB randomness..."]);
 
-        const lsbR = calculateLSBRandomness(data, 0);
-        const lsbG = calculateLSBRandomness(data, 1);
-        const lsbB = calculateLSBRandomness(data, 2);
+          const lsbR = scan.lsbRandomness.r;
+          const lsbG = scan.lsbRandomness.g;
+          const lsbB = scan.lsbRandomness.b;
 
         setTerminalLines((prev) => [...prev, `LSB flip rate R:${lsbR.toFixed(4)} G:${lsbG.toFixed(4)} B:${lsbB.toFixed(4)}`, "Running Chi-Square test..."]);
 
-        const chiR = detectChiSquare(data, 0);
-        const chiG = detectChiSquare(data, 1);
-        const chiB = detectChiSquare(data, 2);
+          const chiR = scan.chiSquare.r;
+          const chiG = scan.chiSquare.g;
+          const chiB = scan.chiSquare.b;
 
         setTerminalLines((prev) => [...prev, `Chi² R:${chiR.toFixed(4)} G:${chiG.toFixed(4)} B:${chiB.toFixed(4)}`, "Computing histogram..."]);
 
-        const hist = getHistogram(data, 2); // Blue channel
-        setHistogramData(hist);
-
-        // Calculate probability
-        let score = 0;
-        // High entropy in blue channel indicates possible stego
-        if (entropyB > 7.5) score += 25;
-        else if (entropyB > 7.0) score += 15;
-        // LSB randomness close to 0.5 indicates uniform distribution (stego)
-        const lsbDev = Math.abs(lsbB - 0.5);
-        if (lsbDev < 0.02) score += 30;
-        else if (lsbDev < 0.05) score += 15;
-        // Chi-square close to 1.0 indicates PoV pairs are equalized (stego)
-        if (chiB < 1.5) score += 25;
-        else if (chiB < 3.0) score += 10;
-        // Check if adjacent histogram values are suspiciously equal
-        let equalPairs = 0;
-        for (let i = 0; i < 256; i += 2) {
-          if (Math.abs(hist[i] - hist[i + 1]) <= 1) equalPairs++;
-        }
-        if (equalPairs > 50) score += 20;
-        else if (equalPairs > 20) score += 10;
-
-        const probability = Math.min(score, 100);
+          const hist = scan.histogram; // Blue channel
+          setHistogramData(hist);
+          const probability = scan.probability;
         let verdict: string;
         if (probability >= 70) verdict = "HIGH — Hidden data likely present";
         else if (probability >= 40) verdict = "MEDIUM — Possible hidden data";
@@ -129,8 +115,14 @@ export default function SteganalysisTab() {
           "ANALYSIS COMPLETE ✔",
         ]);
 
-        setAnalyzing(false);
-        toast.success("Analysis complete");
+          setAnalyzing(false);
+          toast.success("Analysis complete");
+        } catch (err) {
+          if ((err as DOMException).name === "AbortError") return;
+          setTerminalLines((prev) => [...prev, `[ERR] ${(err as Error).message}`]);
+          setAnalyzing(false);
+          toast.error("Analysis failed");
+        }
       };
       img.src = e.target?.result as string;
     };
