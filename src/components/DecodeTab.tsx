@@ -318,13 +318,14 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             toast.success("Message decoded");
           }
         } catch (err) {
+          if ((err as DOMException).name === "AbortError") return;
           const reason = (err as Error).message;
           onLog?.("err", "extract", `pipeline exception · ${reason}`);
           setValidationError({ code: "D-EXTRACT-FAIL", title: "Extract pipeline failed", reason, hint: "The carrier may be truncated or in an unsupported format." });
           setTerminalLines((prev) => [...prev, `[ERR] ${(err as Error).message}`]);
           toast.error("Decoding failed");
         } finally {
-          setIsDecoding(false);
+          if (!isStale()) setIsDecoding(false);
         }
       };
       img.src = e.target?.result as string;
