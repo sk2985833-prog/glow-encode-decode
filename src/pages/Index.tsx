@@ -92,7 +92,7 @@ const Index = () => {
     return onCrossTab((evt) => {
       if (evt.kind === "op-begin") {
         setLogs((prev) => [...prev, {
-          id: crypto.randomUUID(), timestamp: Date.now(), level: "info",
+          id: crypto.randomUUID(), timestamp: Date.now(), level: "info" as const,
           source: "peer-tab", message: `peer ${evt.tabId.slice(-6)} began ${evt.shortId} (${evt.module})`,
         }].slice(-80));
       }
