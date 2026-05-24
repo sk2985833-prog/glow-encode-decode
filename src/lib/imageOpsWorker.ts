@@ -17,6 +17,8 @@ type TaskMessage =
   | { id: string; type: "steganalysis"; width: number; height: number; buffer: ArrayBuffer }
   | { id: string; type: "pixelView"; width: number; height: number; buffer: ArrayBuffer; mode: "rgb" | "red" | "green" | "blue" | "lsb-map" | "lsb-blue" };
 
+const ctx = self as unknown as { postMessage: (message: unknown, transfer?: Transferable[]) => void; onmessage: ((event: MessageEvent<TaskMessage>) => void) | null };
+
 function imageData(width: number, height: number, buffer: ArrayBuffer): ImageData {
   return new ImageData(new Uint8ClampedArray(buffer), width, height);
 }
@@ -54,13 +56,13 @@ function probabilityFromMetrics(entropyB: number, lsbB: number, chiB: number, hi
   return Math.min(score, 100);
 }
 
-self.onmessage = (event: MessageEvent<TaskMessage>) => {
+ctx.onmessage = (event: MessageEvent<TaskMessage>) => {
   const task = event.data;
   try {
     if (task.type === "writeBits") {
       const imgData = imageData(task.width, task.height, task.buffer);
       writeBitsToImageData(imgData, task.bits, undefined, task.mode, task.key, task.depth);
-      self.postMessage({ id: task.id, ok: true, result: { buffer: imgData.data.buffer } }, [imgData.data.buffer]);
+      ctx.postMessage({ id: task.id, ok: true, result: { buffer: imgData.data.buffer } }, [imgData.data.buffer]);
       return;
     }
 
@@ -73,12 +75,12 @@ self.onmessage = (event: MessageEvent<TaskMessage>) => {
         for (const depth of depths) {
           const result = tryReadHeader(imgData, mode, key, depth);
           if (result.valid) {
-            self.postMessage({ id: task.id, ok: true, result: { found: true, mode, depth, ...result } });
+            ctx.postMessage({ id: task.id, ok: true, result: { found: true, mode, depth, ...result } });
             return;
           }
         }
       }
-      self.postMessage({ id: task.id, ok: true, result: { found: false } });
+      ctx.postMessage({ id: task.id, ok: true, result: { found: false } });
       return;
     }
 
@@ -89,7 +91,7 @@ self.onmessage = (event: MessageEvent<TaskMessage>) => {
       const chiSquare = { r: detectChiSquare(data, 0), g: detectChiSquare(data, 1), b: detectChiSquare(data, 2) };
       const histogram = getHistogram(data, 2);
       const probability = probabilityFromMetrics(entropy.b, lsbRandomness.b, chiSquare.b, histogram);
-      self.postMessage({ id: task.id, ok: true, result: { entropy, lsbRandomness, chiSquare, histogram, probability } });
+      ctx.postMessage({ id: task.id, ok: true, result: { entropy, lsbRandomness, chiSquare, histogram, probability } });
       return;
     }
 
@@ -104,9 +106,9 @@ self.onmessage = (event: MessageEvent<TaskMessage>) => {
           else if (task.mode === "lsb-blue") { const lsb = data[i + 2] & 1; data[i] = 0; data[i + 1] = lsb * 255; data[i + 2] = lsb * 255; data[i + 3] = 255; }
         }
       }
-      self.postMessage({ id: task.id, ok: true, result: { buffer: data.buffer } }, [data.buffer]);
+      ctx.postMessage({ id: task.id, ok: true, result: { buffer: data.buffer } }, [data.buffer]);
     }
   } catch (error) {
-    self.postMessage({ id: task.id, ok: false, error: (error as Error)?.message ?? String(error) });
+    ctx.postMessage({ id: task.id, ok: false, error: (error as Error)?.message ?? String(error) });
   }
 };
