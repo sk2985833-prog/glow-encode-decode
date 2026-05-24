@@ -1,11 +1,12 @@
-import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useState, useRef, useCallback, forwardRef, useImperativeHandle, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, KeyRound, Copy } from "lucide-react";
-import { readBitsFromImageData, bitsToUint8Array, decryptMessage, sha256Hex, EncodingMode, LsbDepth, DEFAULT_LSB_DEPTH } from "@/lib/steganography";
+import { decryptMessage, sha256Hex, EncodingMode, LsbDepth } from "@/lib/steganography";
+import { readPayloadAutoOffThread } from "@/lib/workerQueue";
 import TerminalOutput from "./TerminalOutput";
 import InlineError from "@/components/InlineError";
 
@@ -24,27 +25,6 @@ const MODE_LABELS: Record<string, { label: string; icon: string; color: string }
   'random-pixel': { label: "Random Pixel", icon: "🎲", color: "text-purple-400" },
   'edge-based': { label: "Edge-based", icon: "🔬", color: "text-cyan-400" },
 };
-
-function tryReadHeader(imgData: ImageData, mode: EncodingMode, key?: number, depth: LsbDepth = DEFAULT_LSB_DEPTH): { valid: boolean; length: number; payload: string } {
-  try {
-    const headerBits = readBitsFromImageData(imgData, 32, mode, key, depth);
-    const headerBytes = bitsToUint8Array(headerBits);
-    const length = (headerBytes[0] << 24) | (headerBytes[1] << 16) | (headerBytes[2] << 8) | headerBytes[3];
-    if (length <= 0 || length > 500_000) return { valid: false, length: 0, payload: "" };
-
-    const totalBits = (4 + length) * 8;
-    const allBits = readBitsFromImageData(imgData, totalBits, mode, key, depth);
-    const allBytes = bitsToUint8Array(allBits);
-    const payload = new TextDecoder().decode(allBytes.slice(4));
-
-    if (payload.startsWith("MODE:") || payload.startsWith("ENC:") || payload.startsWith("PLAIN:") || payload.startsWith("FILE:")) {
-      return { valid: true, length, payload };
-    }
-    return { valid: false, length, payload };
-  } catch {
-    return { valid: false, length: 0, payload: "" };
-  }
-}
 
 /** Strip and verify a SHA256:<hex>:<payload> envelope. Returns the inner payload. Throws on mismatch. */
 async function verifyAndStripChecksum(payload: string): Promise<string> {
@@ -75,6 +55,10 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
   const [detectedEncrypted, setDetectedEncrypted] = useState(false);
   const [validationError, setValidationError] = useState<{ code: string; title: string; reason: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const decodeAbortRef = useRef<AbortController | null>(null);
+  const decodeSeqRef = useRef(0);
+
+  useEffect(() => () => decodeAbortRef.current?.abort(), []);
 
   const handleClear = useCallback(() => {
     setPassword("");
@@ -144,6 +128,11 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
       return;
     }
 
+    decodeAbortRef.current?.abort();
+    const controller = new AbortController();
+    const seq = ++decodeSeqRef.current;
+    decodeAbortRef.current = controller;
+    const isStale = () => controller.signal.aborted || seq !== decodeSeqRef.current;
     setIsDecoding(true);
     setDecodedMessage("");
     setDecodedFile(null);
@@ -175,29 +164,16 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
           setTerminalLines((prev) => [...prev, "Auto-detecting encoding algorithm..."]);
 
           const keyNum = embedKey ? parseInt(embedKey) || 483920 : undefined;
-          const modes: EncodingMode[] = ['lsb', 'multi-bit', 'random-pixel', 'edge-based'];
-          let found = false;
-          let detMode: EncodingMode = 'lsb';
-          let detDepth: LsbDepth = DEFAULT_LSB_DEPTH;
-          let payload = "";
-
-          // Try each mode × depth (1..4 for LSB-style modes) to find valid data
-          outer: for (const mode of modes) {
-            const key = mode === 'random-pixel' ? keyNum : undefined;
-            const depths: LsbDepth[] = mode === 'multi-bit' ? [1] : [1, 2, 3, 4];
-            for (const d of depths) {
-              onLog?.("info", "extract", `probing mode=${mode}${mode === 'multi-bit' ? "" : ` · depth=${d}`}${key ? ` · key=${key}` : ""}`);
-              const result = tryReadHeader(imgData, mode, key, d);
-              if (result.valid) {
-                found = true;
-                detMode = mode;
-                detDepth = d;
-                payload = result.payload;
-                onLog?.("ok", "extract", `signature matched · algo=${mode}${mode === 'multi-bit' ? "" : ` · depth=${d}`} · payload=${result.length}B`);
-                setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${mode.toUpperCase()}${mode === 'multi-bit' ? "" : ` (depth=${d})`}`]);
-                break outer;
-              }
-            }
+          onLog?.("info", "extract", "probing modes off-thread · lsb/multi-bit/random-pixel/edge-based");
+          const detected = await readPayloadAutoOffThread({ width: canvas.width, height: canvas.height, data: imgData.data.slice(), key: keyNum, signal: controller.signal });
+          if (isStale()) return;
+          const found = detected.found;
+          const detMode = (detected.mode ?? 'lsb') as EncodingMode;
+          const detDepth = (detected.depth ?? 1) as LsbDepth;
+          let payload = detected.payload ?? "";
+          if (found) {
+            onLog?.("ok", "extract", `signature matched · algo=${detMode}${detMode === 'multi-bit' ? "" : ` · depth=${detDepth}`} · payload=${detected.length ?? 0}B`);
+            setTerminalLines((prev) => [...prev, `[OK] Detected algorithm: ${detMode.toUpperCase()}${detMode === 'multi-bit' ? "" : ` (depth=${detDepth})`}`]);
           }
 
           if (!found) {
@@ -342,13 +318,14 @@ const DecodeTab = forwardRef<DecodeTabRef, DecodeTabProps>(({ onHistoryAdd, onLo
             toast.success("Message decoded");
           }
         } catch (err) {
+          if ((err as DOMException).name === "AbortError") return;
           const reason = (err as Error).message;
           onLog?.("err", "extract", `pipeline exception · ${reason}`);
           setValidationError({ code: "D-EXTRACT-FAIL", title: "Extract pipeline failed", reason, hint: "The carrier may be truncated or in an unsupported format." });
           setTerminalLines((prev) => [...prev, `[ERR] ${(err as Error).message}`]);
           toast.error("Decoding failed");
         } finally {
-          setIsDecoding(false);
+          if (!isStale()) setIsDecoding(false);
         }
       };
       img.src = e.target?.result as string;

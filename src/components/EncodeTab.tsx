@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,6 @@ import InputForensics from "@/components/InputForensics";
 import {
   stringToUint8Array,
   uint8ToBitArray,
-  writeBitsToImageData,
   encryptMessage,
   generatePassword,
   calculateCapacity,
@@ -22,6 +21,7 @@ import {
   DEFAULT_LSB_DEPTH,
   lsbReliability,
 } from "@/lib/steganography";
+import { writeBitsOffThread } from "@/lib/workerQueue";
 
 interface EncodeTabProps {
   image: HTMLImageElement | null;
@@ -32,6 +32,15 @@ interface EncodeTabProps {
 }
 
 type InputMode = "text" | "file";
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 
 const MODE_INFO: Record<EncodingMode, { label: string; icon: string; desc: string }> = {
   lsb: { label: "LSB (Fast)", icon: "⚡", desc: "Standard LSB — 1 bit in blue channel" },
@@ -56,7 +65,11 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
   const [validationError, setValidationError] = useState<{ code: string; title: string; reason: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const secretFileRef = useRef<HTMLInputElement>(null);
+  const encodeAbortRef = useRef<AbortController | null>(null);
+  const encodeSeqRef = useRef(0);
   const [dragOver, setDragOver] = useState(false);
+
+  useEffect(() => () => encodeAbortRef.current?.abort(), []);
 
   const capacity = image ? calculateCapacity(image.width, image.height, encodingMode, lsbDepth) : 0;
   const supportsDepth = encodingMode !== 'multi-bit';
@@ -154,6 +167,11 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       return;
     }
 
+    encodeAbortRef.current?.abort();
+    const controller = new AbortController();
+    const seq = ++encodeSeqRef.current;
+    encodeAbortRef.current = controller;
+    const isStale = () => controller.signal.aborted || seq !== encodeSeqRef.current;
     setEncoding(true);
     setProgress(0);
     const t0 = performance.now();
@@ -167,7 +185,8 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
         const buffer = await secretFile.arrayBuffer();
         const bytes = new Uint8Array(buffer);
         onLog?.("info", "embed", `arrayBuffer → uint8(${bytes.length}) · base64 encoding`);
-        const b64 = btoa(String.fromCharCode(...Array.from(bytes)));
+        if (isStale()) return;
+        const b64 = bytesToBase64(bytes);
         payloadStr = `FILE:${secretFile.name}:${secretFile.type}:${b64}`;
       } else {
         payloadStr = message;
@@ -183,6 +202,7 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
         onLog?.("info", "crypto", "PBKDF2-SHA256 key derivation start · iter=250000");
         const tk = performance.now();
         payloadStr = await encryptMessage(pw, payloadStr);
+        if (isStale()) return;
         onLog?.("ok",   "crypto", `key derived & AES-256-GCM seal complete · ${(performance.now() - tk).toFixed(2)}ms`);
         payloadStr = "ENC:" + payloadStr;
       } else if (inputMode === "text") {
@@ -236,13 +256,19 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       if (keyNum !== undefined) onLog?.("info", "embed", `keyed permutation seed=${keyNum}`);
 
       onLog?.("sys", "embed", `bit-write start · algo=${encodingMode}${supportsDepth ? ` · depth=${lsbDepth}` : ""}`);
-      await new Promise<void>((resolve) => {
-        setTimeout(() => {
-          writeBitsToImageData(imgData, bits, (p) => setProgress(p), encodingMode, keyNum, supportsDepth ? lsbDepth : DEFAULT_LSB_DEPTH);
-          ctx.putImageData(imgData, 0, 0);
-          resolve();
-        }, 60);
+      const workerResult = await writeBitsOffThread({
+        width: canvas.width,
+        height: canvas.height,
+        data: imgData.data.slice(),
+        bits,
+        mode: encodingMode,
+        key: keyNum,
+        depth: supportsDepth ? lsbDepth : DEFAULT_LSB_DEPTH,
+        signal: controller.signal,
       });
+      if (isStale()) return;
+      setProgress(100);
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(workerResult.buffer), canvas.width, canvas.height), 0, 0);
       onLog?.("ok", "embed", `bit-write complete · putImageData → cover modulated`);
 
       setEncodedCanvas(canvas);
@@ -262,12 +288,15 @@ export default function EncodeTab({ image, onImageLoad, onEncoded, onHistoryAdd,
       });
       toast.success("Encoding complete!");
     } catch (err) {
+      if ((err as DOMException).name === "AbortError") return;
       const reason = (err as Error).message;
       setValidationError({ code: "E-EMBED-FAIL", title: "Embed pipeline failed", reason, hint: "Check console; the cover or payload may be malformed." });
       onLog?.("err", "embed", `pipeline exception · ${reason}`);
     } finally {
-      setEncoding(false);
-      setProgress(0);
+      if (!isStale()) {
+        setEncoding(false);
+        setProgress(0);
+      }
     }
   };
 

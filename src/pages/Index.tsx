@@ -21,7 +21,7 @@ import { Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { sha256Report } from "@/lib/forensics";
 import { ops, OpModule, OpRecord } from "@/lib/ops";
-import { sessionLabel, newRequestId, broadcast, onCrossTab } from "@/lib/identity";
+import { sessionLabel, tabId, newRequestId, broadcast, onCrossTab } from "@/lib/identity";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
 
@@ -60,7 +60,6 @@ const Index = () => {
   const decodeTabRef = useRef<DecodeTabRef | null>(null);
   const opClearTimerRef = useRef<number | null>(null);
   const progressIntervalRef = useRef<number | null>(null);
-  const requestIdCounter = useRef(0);
   const runningOpsRef = useRef<Set<string>>(new Set());
   // Maps a log "source" (e.g. "embed") to its currently-open OpRecord so that
   // subsequent info/ok/err pushLog calls under the same source map back to it.
@@ -71,16 +70,16 @@ const Index = () => {
   const sessionId = sessionLabel;
 
   // Initialise the global orchestrator once per session.
-  useEffect(() => { ops.init(sessionId); }, [sessionId]);
+  useEffect(() => { ops.init(sessionId, tabId); }, [sessionId]);
 
   // Bridge orchestrator events → BroadcastChannel so peer tabs can keep their
   // ACTIVE-op counters and graphs in sync without duplicating polling.
   useEffect(() => {
     const unsub = ops.subscribe((evt) => {
       if (evt.kind === "begin") {
-        broadcast({ kind: "op-begin", tabId: "", shortId: evt.op.shortId, module: evt.op.module, at: Date.now() });
+        broadcast({ kind: "op-begin", tabId, shortId: evt.op.shortId, module: evt.op.module, at: Date.now() });
       } else if (evt.kind === "end") {
-        broadcast({ kind: "op-end", tabId: "", shortId: evt.op.shortId, status: evt.op.status, at: Date.now() });
+        broadcast({ kind: "op-end", tabId, shortId: evt.op.shortId, status: evt.op.status, at: Date.now() });
       }
     });
     return () => { unsub(); };
