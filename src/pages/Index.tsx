@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import EncodeTab from "@/components/EncodeTab";
 import DecodeTab, { DecodeTabRef } from "@/components/DecodeTab";
