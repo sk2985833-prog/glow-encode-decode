@@ -66,6 +66,11 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
   const utc = time.toISOString().slice(11, 19);
   const local = time.toLocaleTimeString("en-US", { hour12: false });
   const dateStr = time.toISOString().slice(0, 10);
+  const { cpu, mem } = snapshot;
+  const cpuSpike = cpu.spike;
+  const memSpike = mem.spike;
+  const cpuHistory = cpu.history;
+  const memHistory = mem.history;
   const cpuLabel = formatPercent(cpu.pct);
   const memLabel = mem.supported ? `${Math.max(1, Math.round(mem.usedMb))}MB` : "n/a";
   const showProgress = activeOp !== "IDLE" && typeof activeProgress === "number";
@@ -128,7 +133,7 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
             onClick={() => {
               setRealism((v) => {
                 const next = !v;
-                if (next) probeRef.current?.burst(2500);
+                if (next) telemetry.requestLoadTest(2500);
                 return next;
               });
             }}
@@ -180,7 +185,7 @@ export default function StatusBar({ opCount = 0, activeOp = "IDLE", lastActivity
                 ))}
                 <button
                   type="button"
-                  onClick={() => setThresholds(DEFAULT_THRESHOLDS)}
+                  onClick={() => setThresholds(DEFAULT_TELEMETRY_THRESHOLDS)}
                   className="w-full text-[10px] tracking-wider py-1 border border-border/60 rounded hover:bg-muted/40"
                 >
                   RESET DEFAULTS
