@@ -30,6 +30,8 @@ export interface OpRecord {
   shortId: string;
   /** Root request ID (== requestId unless this is a child op). */
   rootRequestId: string;
+  pipelineId: string;
+  tabId: string;
   module: OpModule;
   label: string;
   status: OpStatus;
@@ -51,12 +53,14 @@ type Listener = (evt: OpEvent) => void;
 
 class OpsOrchestrator {
   private sessionId = "";
+  private tabId = "";
   private counter = 0;
   private byId = new Map<string, OpRecord>();
   private listeners = new Set<Listener>();
 
-  init(sessionId: string) {
+  init(sessionId: string, tabId = "") {
     this.sessionId = sessionId;
+    this.tabId = tabId;
     this.counter = 0;
     this.byId.clear();
   }
@@ -79,11 +83,14 @@ class OpsOrchestrator {
     const requestId = `${this.sessionId || "NO-SESSION"}-${seq}`;
     const shortId = `OP-${seq.slice(-2)}`;
     const parent = parentId ? this.byId.get(parentId) : undefined;
+    const uuid = cryptoUuid();
     const op: OpRecord = {
-      uuid: cryptoUuid(),
+      uuid,
       requestId,
       shortId,
       rootRequestId: parent?.rootRequestId ?? requestId,
+      pipelineId: parent?.pipelineId ?? `PIPE-${this.tabId || "NO-TAB"}-${uuid.slice(0, 12)}`,
+      tabId: this.tabId || "NO-TAB",
       module,
       label,
       status: "running",
@@ -126,7 +133,13 @@ class OpsOrchestrator {
 
 function cryptoUuid(): string {
   try { return crypto.randomUUID(); }
-  catch { return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; }
+  catch {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
 }
 
 /** Singleton — every module in the app shares this. */
