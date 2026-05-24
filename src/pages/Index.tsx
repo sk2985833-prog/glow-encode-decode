@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import EncodeTab from "@/components/EncodeTab";
 import DecodeTab, { DecodeTabRef } from "@/components/DecodeTab";
@@ -21,6 +21,7 @@ import { Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { sha256Report } from "@/lib/forensics";
 import { ops, OpModule, OpRecord } from "@/lib/ops";
+import { sessionLabel, newRequestId, broadcast, onCrossTab } from "@/lib/identity";
 
 type TabValue = "encode" | "decode" | "analyze" | "visualize" | "metadata" | "attack" | "learn";
 
@@ -65,13 +66,38 @@ const Index = () => {
   // subsequent info/ok/err pushLog calls under the same source map back to it.
   const pendingOpsRef = useRef<Map<string, OpRecord>>(new Map());
 
-  const sessionId = useMemo(() => {
-    const rand = Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
-    return `SL-${new Date().getFullYear()}-${rand}`;
-  }, []);
+  // Persistent session label (localStorage-backed). Stable across reloads and
+  // shared by every tab of the same browser profile, while tabId stays unique.
+  const sessionId = sessionLabel;
 
   // Initialise the global orchestrator once per session.
   useEffect(() => { ops.init(sessionId); }, [sessionId]);
+
+  // Bridge orchestrator events → BroadcastChannel so peer tabs can keep their
+  // ACTIVE-op counters and graphs in sync without duplicating polling.
+  useEffect(() => {
+    const unsub = ops.subscribe((evt) => {
+      if (evt.kind === "begin") {
+        broadcast({ kind: "op-begin", tabId: "", shortId: evt.op.shortId, module: evt.op.module, at: Date.now() });
+      } else if (evt.kind === "end") {
+        broadcast({ kind: "op-end", tabId: "", shortId: evt.op.shortId, status: evt.op.status, at: Date.now() });
+      }
+    });
+    return () => { unsub(); };
+  }, []);
+
+  // Observe peer-tab ops — surface them in the local log so operators see
+  // multi-tab activity instead of silently desyncing.
+  useEffect(() => {
+    return onCrossTab((evt) => {
+      if (evt.kind === "op-begin") {
+        setLogs((prev) => [...prev, {
+          id: crypto.randomUUID(), timestamp: Date.now(), level: "info" as const,
+          source: "peer-tab", message: `peer ${evt.tabId.slice(-6)} began ${evt.shortId} (${evt.module})`,
+        }].slice(-80));
+      }
+    });
+  }, []);
 
   // Drive the ACTIVE op indicator from real orchestrator events — no string parsing.
   useEffect(() => {
@@ -115,12 +141,8 @@ const Index = () => {
     return () => { unsub(); };
   }, []);
 
-  /** Generate a unique request ID for each operation. */
-  const nextRequestId = useCallback(() => {
-    requestIdCounter.current++;
-    const seq = requestIdCounter.current.toString().padStart(4, "0");
-    return `${sessionId}-${seq}`;
-  }, [sessionId]);
+  /** Mint a unique request ID — UUID-based, collision-proof across tabs. */
+  const nextRequestId = useCallback(() => newRequestId(), []);
 
   const pushLog = useCallback((level: LogEntry["level"], source: string, message: string) => {
     // Pure log append. ACTIVE-op state is driven by ops.subscribe — not by string parsing.
