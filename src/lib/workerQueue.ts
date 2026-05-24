@@ -25,7 +25,7 @@ class WorkerQueue {
   private queue: QueueItem[] = [];
   private inFlight = new Map<string, QueueItem>();
 
-  run<T>(task: Omit<WorkerTask, "id">, transfer: Transferable[] = [], signal?: AbortSignal): Promise<T> {
+  run<T>(task: Omit<WorkerTask, "id"> & Record<string, unknown>, transfer: Transferable[] = [], signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) return Promise.reject(new DOMException("Operation aborted", "AbortError"));
     if (this.queue.length + this.inFlight.size >= MAX_QUEUE) {
       return Promise.reject(new Error("Worker queue overflow — retry after current operations complete"));
